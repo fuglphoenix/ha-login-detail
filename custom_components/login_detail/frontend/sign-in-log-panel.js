@@ -304,4 +304,9 @@ class LoginDetailSignInLog extends HTMLElement {
   }
 }
 
-customElements.define("login-detail-sign-in-log", LoginDetailSignInLog);
+// A tab that was open during an upgrade loads the module again under the new
+// ?v= URL; the name is already taken there, and the tab keeps the old class
+// until it is reloaded.
+if (!customElements.get("login-detail-sign-in-log")) {
+  customElements.define("login-detail-sign-in-log", LoginDetailSignInLog);
+}
