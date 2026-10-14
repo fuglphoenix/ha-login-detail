@@ -34,7 +34,19 @@ REPORT = "report.json"
 EVENT_FAILED = "login_detail_failed"
 EVENT_OK = "login_detail_succeeded"
 
-EXPECTED_ENTITIES = {
+# Entity IDs a new installation gets (0.8.0 and later, from the English names).
+NEW_ENTITIES = {
+    "sensor.login_latest_event": "login_detail_latest",
+    "sensor.login_ok_24h": "login_detail_ok_24h",
+    "sensor.login_failed_24h": "login_detail_failed_24h",
+    "sensor.login_ip_addresses_24h": "login_detail_unique_ip_24h",
+    "sensor.login_history": "login_detail_history",
+    "sensor.login_active_sessions": "login_detail_sessions",
+}
+
+# Entity IDs an installation from before 0.8.0 has and must keep. Seeding the
+# entity registry with these rows (tests/README.md, step 3) checks that.
+LEGACY_ENTITIES = {
     "sensor.login_seneste_haendelse": "login_detail_latest",
     "sensor.login_ok_24t": "login_detail_ok_24h",
     "sensor.login_mislykkede_24t": "login_detail_failed_24h",
@@ -246,17 +258,19 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
     registry = er.async_get(hass)
     rows = er.async_entries_for_config_entry(registry, entry.entry_id)
     found = {row.entity_id: row.unique_id for row in rows}
+    # A seeded registry keeps the legacy IDs; a fresh one gets the new ones.
+    expected = LEGACY_ENTITIES if found == LEGACY_ENTITIES else NEW_ENTITIES
     report.check(
         "5. exactly the six known entities are linked to the entry",
-        found == EXPECTED_ENTITIES,
-        {"found": found},
+        found == expected,
+        {"found": found, "legacy_ids": expected is LEGACY_ENTITIES},
     )
     report.check(
         "6. all six entities have a state",
-        all(hass.states.get(e) is not None for e in EXPECTED_ENTITIES),
+        all(hass.states.get(e) is not None for e in expected),
         {
             e: (hass.states.get(e).state if hass.states.get(e) else None)
-            for e in EXPECTED_ENTITIES
+            for e in expected
         },
     )
 
@@ -380,7 +394,7 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
     rows = er.async_entries_for_config_entry(er.async_get(hass), entry.entry_id)
     report.check(
         "19. the entities keep their IDs after reload",
-        {row.entity_id for row in rows} == set(EXPECTED_ENTITIES),
+        {row.entity_id for row in rows} == set(expected),
         sorted(row.entity_id for row in rows),
     )
 
@@ -418,8 +432,8 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
     )
     report.check(
         "24. the entities are gone after removal",
-        all(hass.states.get(e) is None for e in EXPECTED_ENTITIES),
-        [e for e in EXPECTED_ENTITIES if hass.states.get(e) is not None],
+        all(hass.states.get(e) is None for e in expected),
+        [e for e in expected if hass.states.get(e) is not None],
     )
 
     # ---- 8. Setup from the UI --------------------------------------------
@@ -454,7 +468,7 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
     rows = er.async_entries_for_config_entry(er.async_get(hass), new_entry.entry_id)
     report.check(
         "28. the same six entity IDs come back",
-        {row.entity_id for row in rows} == set(EXPECTED_ENTITIES),
+        {row.entity_id for row in rows} == set(expected),
         sorted(row.entity_id for row in rows),
     )
     capture.reset()
