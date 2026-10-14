@@ -122,7 +122,7 @@ Six sensors are created automatically. No YAML, no helpers.
 
 | Entity ID (new installation) | Entity ID (installed before 0.8.0) | Shows |
 |---|---|---|
-| `sensor.login_latest_event` | `sensor.login_seneste_haendelse` | Latest login event as `result · username · ip` (the endpoint instead of the username for a rejected request). Attributes: time, result, user, IP, hostname, auth provider, endpoint, count. |
+| `sensor.login_latest_event` | `sensor.login_seneste_haendelse` | Latest login event as `result · username · ip` (the endpoint instead of the username for a rejected request). Attributes: `time`, `result`, `username`, `ip`, `hostname`, `auth_provider`, `endpoint`, `count`. |
 | `sensor.login_ok_24h` | `sensor.login_ok_24t` | Number of successful logins in the last 24 hours, with per-IP, per-username and per-endpoint counts. |
 | `sensor.login_failed_24h` | `sensor.login_mislykkede_24t` | Number of failed login attempts and rejected requests in the last 24 hours, with per-IP, per-username and per-endpoint (`endpoints`) counts. |
 | `sensor.login_ip_addresses_24h` | `sensor.login_ip_adresser_24t` | Number of unique IP addresses that tried to log in or were rejected in the last 24 hours, with hostname, counts, usernames and endpoints per IP. |
@@ -136,14 +136,41 @@ registry finds the entity by its unique ID, which has not changed. So:
 
 - **A new installation** gets the English entity IDs in the first column.
 - **An existing installation keeps its entity IDs** from the second column -
-  dashboards, automations and templates keep working. Only the displayed name
-  and unit change. If you have renamed an entity yourself, your name is kept.
+  whatever refers to the entity ID keeps working. The displayed name and unit
+  change, and so do the attribute keys (below). If you have renamed an entity
+  yourself, your name is kept.
 - To switch an existing installation to the English IDs, rename them under
   **Settings → Entities** (entity ID field), and update whatever refers to
   them.
 
-The attribute keys are still in Danish - see
-[Known limitations](#known-limitations).
+**Attribute keys.** Since 0.8.0 the attribute keys are English as well. This
+is a breaking change: a template, automation or dashboard card that reads an
+attribute, for example `state_attr('sensor.login_failed_24h', 'brugernavne')`,
+must use the new key (`'usernames'`). Keys not listed (`ip`, `endpoint`,
+`endpoints`, `count`, `ok`, `type`) are unchanged.
+
+| Sensor | Before 0.8.0 | Since 0.8.0 |
+|---|---|---|
+| Latest event, and each entry of `events` | `tidspunkt` | `time` |
+| | `resultat` | `result` |
+| | `bruger` | `username` |
+| | `vaert` | `hostname` |
+| | `metode` | `auth_provider` |
+| Ok 24h, failed 24h | `ip_fordeling` | `ip_addresses` |
+| | `brugernavne` | `usernames` |
+| | `seneste` | `latest` |
+| IP addresses 24h | `adresser` | `addresses` |
+| each entry of `addresses` | `vaert` | `hostname` |
+| | `mislykkede` | `failed` |
+| | `seneste` | `latest` |
+| | `brugere` | `usernames` |
+| History | `hændelser` | `events` |
+| Active sessions | `sessioner` | `sessions` |
+| | `ip_fordeling` | `ip_addresses` |
+| each entry of `sessions` | `bruger` | `user` |
+| | `sidst_brugt` | `last_used` |
+| | `klient` | `client` |
+| All tallies and `addresses` | key `ukendt` (no IP or username) | key `unknown` |
 
 Each history entry gets a hostname from a reverse DNS lookup. The lookup runs
 in a background task, so a slow or missing PTR record never delays a login.
@@ -364,9 +391,9 @@ usernames and IP addresses gone.
 
   `info` rather than `warning`, because it also gives you the startup line
   the post-upgrade check relies on.
-- **Attribute keys are in Danish** (for example `brugernavne`, `adresser`,
-  `hændelser`, `sessioner`). They are kept for compatibility with existing
-  installations; changing them would break existing dashboards and templates.
+- **The attribute keys changed in 0.8.0** from Danish to English, with no
+  compatibility aliases. Update templates and cards that read attributes, see
+  [Entities](#entities).
 - **Installations from before 0.8.0 keep their Danish entity IDs** (for
   example `sensor.login_mislykkede_24t`), see [Entities](#entities).
 - **The unit of the IP address sensor changed in 0.8.0** from `adresser` to

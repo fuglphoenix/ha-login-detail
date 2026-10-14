@@ -20,7 +20,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The unit change on the IP address sensor makes Home Assistant report a unit
   change for its long-term statistics on an existing installation; resolve it
   under Developer tools → Statistics. See "Known limitations" in README.md.
-- Attribute keys are unchanged (still Danish).
+- **Breaking: English attribute keys.** Templates, automations and dashboard
+  cards that read a sensor attribute must use the new keys. Keys not listed
+  (`ip`, `endpoint`, `endpoints`, `count`, `ok`, `type`) are unchanged; so
+  are entity IDs, unique IDs, states, events and the websocket API.
+
+| Sensor | Before 0.8.0 | Since 0.8.0 |
+|---|---|---|
+| Latest event, and each entry of `events` | `tidspunkt` | `time` |
+| | `resultat` | `result` |
+| | `bruger` | `username` |
+| | `vaert` | `hostname` |
+| | `metode` | `auth_provider` |
+| Ok 24h, failed 24h | `ip_fordeling` | `ip_addresses` |
+| | `brugernavne` | `usernames` |
+| | `seneste` | `latest` |
+| IP addresses 24h | `adresser` | `addresses` |
+| each entry of `addresses` | `vaert` | `hostname` |
+| | `mislykkede` | `failed` |
+| | `seneste` | `latest` |
+| | `brugere` | `usernames` |
+| History | `hændelser` | `events` |
+| Active sessions | `sessioner` | `sessions` |
+| | `ip_fordeling` | `ip_addresses` |
+| each entry of `sessions` | `bruger` | `user` |
+| | `sidst_brugt` | `last_used` |
+| | `klient` | `client` |
+| All tallies and `addresses` | key `ukendt` (no IP or username) | key `unknown` |
 
 ## [0.7.1] - 2026-10-14
 

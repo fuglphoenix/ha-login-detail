@@ -15,11 +15,11 @@ No entity exposes passwords, tokens or keys. The sessions sensor only reads
 metadata (user, IP address, time, client name) through hass.auth - never
 .storage/auth directly.
 
-The entity names and units are English. The unique IDs must never change: the
-entity registry finds an existing entity by its unique ID and keeps its entity
-ID, so installations from before 0.8.0 keep sensor.login_mislykkede_24t and
-the others. The attribute keys are still Danish, kept unchanged on purpose:
-dashboards and templates depend on them. See "Known limitations" in README.md.
+The entity names, units and attribute keys are English. The unique IDs must
+never change: the entity registry finds an existing entity by its unique ID and
+keeps its entity ID, so installations from before 0.8.0 keep
+sensor.login_mislykkede_24t and the others. The attribute keys changed in
+0.8.0; README.md has the old and new keys.
 """
 
 from __future__ import annotations
@@ -50,7 +50,9 @@ TOKEN_TYPE_SYSTEM = "system"
 
 def _tally(values: Any) -> dict[str, int]:
     """Count with str keys - orjson cannot serialise None as a key."""
-    counted = Counter(str(value) if value is not None else "ukendt" for value in values)
+    counted = Counter(
+        str(value) if value is not None else "unknown" for value in values
+    )
     return dict(counted.most_common(10))
 
 
@@ -67,7 +69,7 @@ def _tally_entries(entries: list[dict[str, Any]], key: str) -> dict[str, int]:
     counted: Counter[str] = Counter()
     for entry in entries:
         value = entry.get(key)
-        counted[str(value) if value is not None else "ukendt"] += _weight(entry)
+        counted[str(value) if value is not None else "unknown"] += _weight(entry)
     return dict(counted.most_common(10))
 
 
@@ -107,12 +109,12 @@ def _local(timestamp: str | None) -> str | None:
 def _as_text(entry: dict[str, Any]) -> dict[str, Any]:
     """History entry in the shape the attributes show it."""
     return {
-        "tidspunkt": _local(entry.get("timestamp")),
-        "resultat": entry.get("result"),
-        "bruger": entry.get("username"),
+        "time": _local(entry.get("timestamp")),
+        "result": entry.get("result"),
+        "username": entry.get("username"),
         "ip": entry.get("ip_address"),
-        "vaert": entry.get("hostname"),
-        "metode": entry.get("auth_provider"),
+        "hostname": entry.get("hostname"),
+        "auth_provider": entry.get("auth_provider"),
         "endpoint": entry.get("endpoint"),
         "count": _weight(entry),
     }
@@ -237,13 +239,13 @@ class LoginCountSensor(LoginDetailSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         matching = self._matching()
         # Rejected requests have no username; leave them out of that tally
-        # instead of counting them as "ukendt".
+        # instead of counting them as "unknown".
         with_username = [entry for entry in matching if entry.get("username")]
         return {
-            "ip_fordeling": _tally_entries(matching, "ip_address"),
-            "brugernavne": _tally_entries(with_username, "username"),
+            "ip_addresses": _tally_entries(matching, "ip_address"),
+            "usernames": _tally_entries(with_username, "username"),
             "endpoints": _tally_entries(matching, "endpoint"),
-            "seneste": _local(matching[0].get("timestamp")) if matching else None,
+            "latest": _local(matching[0].get("timestamp")) if matching else None,
         }
 
 
@@ -259,25 +261,25 @@ class LoginUniqueIpSensor(LoginDetailSensor):
     def _per_ip(self) -> dict[str, dict[str, Any]]:
         per_ip: dict[str, dict[str, Any]] = {}
         for entry in self._window():
-            ip_address = entry.get("ip_address") or "ukendt"
+            ip_address = entry.get("ip_address") or "unknown"
             row = per_ip.setdefault(
                 ip_address,
                 {
-                    "vaert": entry.get("hostname"),
+                    "hostname": entry.get("hostname"),
                     "ok": 0,
-                    "mislykkede": 0,
-                    "seneste": _local(entry.get("timestamp")),
-                    "brugere": [],
+                    "failed": 0,
+                    "latest": _local(entry.get("timestamp")),
+                    "usernames": [],
                     "endpoints": [],
                 },
             )
             if entry.get("result") == RESULT_OK:
                 row["ok"] += _weight(entry)
             else:
-                row["mislykkede"] += _weight(entry)
+                row["failed"] += _weight(entry)
             username = entry.get("username")
-            if username and username not in row["brugere"]:
-                row["brugere"].append(username)
+            if username and username not in row["usernames"]:
+                row["usernames"].append(username)
             endpoint = entry.get("endpoint")
             if endpoint and endpoint not in row["endpoints"]:
                 row["endpoints"].append(endpoint)
@@ -289,7 +291,7 @@ class LoginUniqueIpSensor(LoginDetailSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"adresser": self._per_ip()}
+        return {"addresses": self._per_ip()}
 
 
 class LoginHistorySensor(LoginDetailSensor):
@@ -307,7 +309,7 @@ class LoginHistorySensor(LoginDetailSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
-            "hændelser": [
+            "events": [
                 _as_text(entry)
                 for entry in self._data.history[:HISTORY_ATTRIBUTE_LIMIT]
             ]
@@ -360,9 +362,9 @@ class LoginSessionsSensor(SensorEntity):
                         continue
                     sessions.append(
                         {
-                            "bruger": user.name,
+                            "user": user.name,
                             "ip": token.last_used_ip,
-                            "sidst_brugt": (
+                            "last_used": (
                                 dt_util.as_local(token.last_used_at)
                                 .replace(microsecond=0)
                                 .isoformat()
@@ -370,12 +372,12 @@ class LoginSessionsSensor(SensorEntity):
                                 else None
                             ),
                             "type": token.token_type,
-                            "klient": token.client_name or token.client_id,
+                            "client": token.client_name or token.client_id,
                         }
                     )
         except Exception:  # noqa: BLE001 - a sensor must not break startup
             return
-        sessions.sort(key=lambda row: row["sidst_brugt"] or "", reverse=True)
+        sessions.sort(key=lambda row: row["last_used"] or "", reverse=True)
         self._sessions = sessions
         # Same reasoning as in LoginDetailSensor: the timer must not write a
         # recorder row every 5 minutes with no new content.
@@ -391,6 +393,6 @@ class LoginSessionsSensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
-            "sessioner": self._sessions,
-            "ip_fordeling": _tally(row["ip"] for row in self._sessions),
+            "sessions": self._sessions,
+            "ip_addresses": _tally(row["ip"] for row in self._sessions),
         }
