@@ -120,6 +120,10 @@ Non-admin users do not see the panel.
 | Show the Sign-in log panel | on | |
 | Also store usernames that do not exist | off | |
 
+The options can be changed at any time, also on an existing installation;
+saving reloads the integration, so a change applies without a restart. An
+installation from before 0.9.0 reads the new option as off.
+
 An entry is deleted when either limit is reached. Expired entries are removed
 hourly, also when nothing new is logged.
 

@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the log or break a log line. **Warning:** a password typed into the
   username field is then stored in plain text, in the log, the recorder
   database and backups. See docs/privacy.md.
+- The option is under **Configure** on the integration, also on an existing
+  installation: no need to remove and re-add it. An entry from before 0.9.0
+  has no such key and reads it as off; nothing is migrated. Saving reloads
+  the entry, so the change applies at once, without a restart.
 - With the option off, nothing changes: unknown usernames are still `null`,
   and no event, entry or log line has a `known_user` key.
 

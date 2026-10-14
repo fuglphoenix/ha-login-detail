@@ -5,6 +5,11 @@ on a real instance. It sets the integration up from the UI and logs in over
 real HTTP with a username no user has - first with the option off (the
 default), then on, then off again - and writes report5.json.
 
+If the throwaway config already has a login_detail entry (a seeded
+.storage/core.config_entries from before 0.9.0, whose options lack the key),
+the probe uses that entry instead of adding one, and also checks that the
+missing key reads as off and that turning it on keeps the other options.
+
 All users, passwords, IP addresses and user agents below are invented and
 exist only in the throwaway config.
 """
@@ -136,15 +141,12 @@ async def _ws_list(session: aiohttp.ClientSession, token: str) -> dict[str, Any]
 
 
 async def _set_option(hass: HomeAssistant, entry_id: str, on: bool) -> Any:
+    """Like Configure in the UI: keep what the form shows, flip the one box."""
     flow = await hass.config_entries.options.async_init(entry_id)
+    user_input = {key.schema: key.default() for key in flow["data_schema"].schema}
+    user_input["store_unknown_usernames"] = on
     result = await hass.config_entries.options.async_configure(
-        flow["flow_id"],
-        {
-            "max_entries": 500,
-            "max_days": 7,
-            "show_panel": True,
-            "store_unknown_usernames": on,
-        },
+        flow["flow_id"], user_input
     )
     await hass.async_block_till_done()
     return result
@@ -160,11 +162,24 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
     events: list[dict[str, Any]] = []
     hass.bus.async_listen("login_detail_failed", lambda e: events.append(dict(e.data)))
 
-    flow = await hass.config_entries.flow.async_init(TARGET, context={"source": "user"})
-    await hass.config_entries.flow.async_configure(flow["flow_id"], {})
-    await hass.async_block_till_done()
+    existing = bool(hass.config_entries.async_entries(TARGET))
+    if not existing:
+        flow = await hass.config_entries.flow.async_init(
+            TARGET, context={"source": "user"}
+        )
+        await hass.config_entries.flow.async_configure(flow["flow_id"], {})
+        await hass.async_block_till_done()
     entry = hass.config_entries.async_entries(TARGET)[0]
     data = hass.data[TARGET]
+    options_before = dict(entry.options)
+    if existing:
+        report.check(
+            "E0. existing entry from before 0.9.0: no key in options, reads as off",
+            entry.state is ConfigEntryState.LOADED
+            and "store_unknown_usernames" not in entry.options
+            and data.store_unknown_usernames is False,
+            options_before,
+        )
 
     # ---- 1. The option, off by default ---------------------------------------
     options_form = await hass.config_entries.options.async_init(entry.entry_id)
@@ -214,15 +229,20 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
         )
 
         # ---- 3. Option on ----------------------------------------------------
+        old_data = data
         result = await _set_option(hass, entry.entry_id, True)
         data = hass.data[TARGET]
+        entry = hass.config_entries.async_entries(TARGET)[0]
         report.check(
-            "E5. on: the option is saved and applied after the reload",
+            "E5. on: saved via Configure, applied by a reload of the entry"
+            " (no restart), the other options kept",
             result.get("type") == "create_entry"
+            and data is not old_data
             and data.store_unknown_usernames is True
-            and hass.config_entries.async_entries(TARGET)[0].state
-            is ConfigEntryState.LOADED,
-            [result.get("type"), data.store_unknown_usernames],
+            and entry.options["store_unknown_usernames"] is True
+            and all(entry.options.get(k) == v for k, v in options_before.items())
+            and entry.state is ConfigEntryState.LOADED,
+            [result.get("type"), dict(entry.options), options_before],
         )
         capture.lines.clear()
         events.clear()
