@@ -22,12 +22,19 @@ const COLUMNS = [
   ["reason", "Reason"],
   ["username", "Username"],
   ["user_id", "User ID"],
+  ["client", "Client"],
   ["auth_provider", "Method"],
   ["ip", "IP address"],
   ["endpoint", "Endpoint"],
   ["user_agent", "User agent"],
   ["flow_id", "Flow ID"],
 ];
+
+const TOKEN_TYPES = {
+  normal: "access token",
+  long_lived_access_token: "long-lived access token",
+  system: "system token",
+};
 
 const STYLE = `
   :host {
@@ -189,7 +196,8 @@ class LoginDetailSignInLog extends HTMLElement {
             class: "intro",
             text:
               "Login attempts, logins and rejected requests, newest first. " +
-              "Repeated rejections from the same IP address on the same endpoint are folded into one entry. " +
+              "Repeated rejections from the same IP address on the same endpoint, for the same reason and client, are folded into one entry. " +
+              "A rejected request only shows a user and client when its token is proven to be theirs. " +
               "Visible to administrators only.",
           }),
           el("div", { class: "filters" }, [
@@ -246,7 +254,9 @@ class LoginDetailSignInLog extends HTMLElement {
   }
 
   _cell(key, entry) {
-    const value = entry[key];
+    // A rejected request's client is only known once its token is proven:
+    // the long-lived token's name, or the client ID (e.g. https://claude.ai).
+    const value = key === "client" ? entry.client_name || entry.client_id : entry[key];
     if (key === "ts") return el("td", { class: "nowrap", text: this._formatTime(value) });
     if (key === "type") {
       const type = TYPES[value] || { label: value, color: "var(--secondary-text-color)" };
@@ -264,6 +274,9 @@ class LoginDetailSignInLog extends HTMLElement {
     } else {
       cell.textContent = key === "user_id" || key === "flow_id" ? shown.slice(0, 8) : shown;
       cell.title = key === "ip" && entry.hostname ? `${shown} (${entry.hostname})` : shown;
+      if (key === "client" && entry.token_type) {
+        cell.title = `${shown} (${TOKEN_TYPES[entry.token_type] || entry.token_type})`;
+      }
     }
     return cell;
   }

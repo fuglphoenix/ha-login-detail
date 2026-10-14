@@ -33,9 +33,10 @@ it. Real bootstrap, real config entry machinery, real entity registry, real
 | `login_detail_probe` | Import from YAML, adoption of existing entities, login with and without 2FA, reload, removal, UI setup, single-instance guard. |
 | `login_detail_probe2` | The state after migration: a config entry **without** `login_detail:` in `configuration.yaml`. |
 | `login_detail_probe3` | The sign-in log (0.7.0) over real HTTP and websocket: `user_id`, `user_agent`, the username guard, one log line per event, the websocket command and its filters, **refusal for non-admin users**, the panel, retention and the options. |
+| `login_detail_probe4` | Rejected requests (0.7.1) on `/api/mcp` (MCP server, "require admin"), the websocket, `/auth/token` and a signed path: every `rejection` type, the user and client of an expired normal and long-lived token, **forged, unsigned, unknown and revoked tokens naming nobody**, a local-only user from outside, `not_admin`, folding, the `reason` filter, **no token or part of one anywhere** (history, storage file, events, websocket, the whole log), the IP ban counter, and that a call without a token can get the IP banned. |
 
 The probes write their result to `report.json` / `report2.json` /
-`report3.json` in the config directory.
+`report3.json` / `report4.json` in the config directory.
 
 ### How to run it
 
@@ -46,6 +47,7 @@ cp -a custom_components/login_detail /usr/src/login_detail_test/custom_component
 cp -a tests/custom_components/login_detail_probe  /usr/src/login_detail_test/custom_components/
 cp -a tests/custom_components/login_detail_probe2 /usr/src/login_detail_test/custom_components/
 cp -a tests/custom_components/login_detail_probe3 /usr/src/login_detail_test/custom_components/
+cp -a tests/custom_components/login_detail_probe4 /usr/src/login_detail_test/custom_components/
 cp tests/configuration.yaml /usr/src/login_detail_test/configuration.yaml
 
 # 2. .storage/http MUST be seeded with a port other than your instance's,
@@ -73,8 +75,29 @@ cat /usr/src/login_detail_test/report.json
 probe adds the integration from the UI). It needs `http` on port 18123 with
 `ip_ban_enabled: false`, as above.
 
-Expected result for 0.7.0 on Home Assistant 2026.10.1: **A: 35/35, B: 9/9,
-C: 25/25.**
+**Run D in a fresh directory:** only `login_detail_probe4:` in
+`configuration.yaml`, and `http` on port 18123 with IP banning on, a high
+threshold and the test client as a trusted proxy - in the seeded
+`.storage/http`, or as below in `configuration.yaml` in a directory without
+one:
+
+```yaml
+http:
+  server_port: 18123
+  server_host: 127.0.0.1
+  ip_ban_enabled: true
+  login_attempts_threshold: 1000
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 127.0.0.1
+```
+
+Probe D needs the MCP server's requirements (`mcp`, `aiohttp_sse`, `anyio`)
+and `conversation`'s, which a Home Assistant container already has. Its last
+check bans 127.0.0.1 in the throwaway config on purpose.
+
+Expected result for 0.7.1 on Home Assistant 2026.10.1: **A: 35/35, B: 9/9,
+C: 25/25, D: 25/25.**
 
 ### Two things to get right
 

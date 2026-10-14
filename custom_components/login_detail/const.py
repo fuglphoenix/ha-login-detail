@@ -39,6 +39,20 @@ RESULT_MFA_PENDING = "mfa_pending"
 # /auth/token. There is no username to report.
 RESULT_REQUEST_REJECTED = "invalid_request_auth"
 
+# Why a request was rejected (0.7.1), stored as `reason` next to the result
+# above. Only the four marked with * name a user, and only once the token's
+# signature has been verified against the refresh token it claims to belong
+# to - by core for a request it authenticated, by rejection.py otherwise.
+REJECTED_NO_CREDENTIALS = "no_credentials"
+REJECTED_EXPIRED_TOKEN = "expired_token"  # *
+REJECTED_USER_NOT_ALLOWED = "user_not_allowed"  # *
+REJECTED_UNKNOWN_OR_REVOKED_TOKEN = "unknown_or_revoked_token"
+REJECTED_MALFORMED_CREDENTIALS = "malformed_credentials"
+REJECTED_INVALID_SIGNED_PATH = "invalid_signed_path"
+REJECTED_NOT_ADMIN = "not_admin"  # *
+REJECTED_PERMISSION_DENIED = "permission_denied"  # *
+REJECTED_INVALID_AUTH_REQUEST = "invalid_auth_request"
+
 # The endpoint every login flow entry is reported on.
 ENDPOINT_LOGIN_FLOW = "/auth/login_flow"
 

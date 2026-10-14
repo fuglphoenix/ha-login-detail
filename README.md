@@ -36,7 +36,7 @@ Passwords and TOTP codes are never read, logged or forwarded.
 |---|---|
 | `login_detail_failed` | `username`, `user_id`, `ip_address`, `reason`, `flow_id`, `auth_provider`, `endpoint`, `user_agent` |
 | `login_detail_succeeded` | `username`, `user_id`, `ip_address`, `flow_id`, `auth_provider`, `endpoint`, `user_agent` |
-| `login_detail_request_rejected` | `ip_address`, `endpoint`, `reason`, `user_agent` |
+| `login_detail_request_rejected` | `ip_address`, `endpoint`, `reason`, `rejection`, `user_id`, `username`, `client_id`, `client_name`, `token_type`, `user_agent` |
 
 `username` on a failed attempt is only filled in if it belongs to an existing
 user; otherwise it is `null`, so a password typed into the username field is
@@ -48,13 +48,15 @@ Every event is also written as one line to the log - failed attempts at
 logs rejected requests at `WARNING`):
 
 ```text
-Sign-in log: type=auth.login_failed reason=invalid_auth username=alice user_id=9f2c… auth_provider=homeassistant ip=192.0.2.10 endpoint=/auth/login_flow user_agent='Mozilla/5.0 …' flow_id=01J…
+Sign-in log: type=auth.login_failed reason=invalid_auth username=alice user_id=9f2c… auth_provider=homeassistant client_id=None token_type=None client_name=None ip=192.0.2.10 endpoint=/auth/login_flow user_agent='Mozilla/5.0 …' flow_id=01J…
+Sign-in log: type=auth.request_rejected reason=expired_token username=alice user_id=9f2c… auth_provider=None client_id=https://mcp-client.example token_type=normal client_name=None ip=192.0.2.10 endpoint=/api/mcp user_agent='…' flow_id=None
 ```
 
 `login_detail_request_rejected` covers requests that are rejected for invalid
 authentication *outside* the login flow - typically a client with a wrong or
-expired token on `/api/mcp`, `/api/websocket` or `/auth/token`. These carry no
-username. `endpoint` is the route pattern (`/api/mcp`,
+expired token on `/api/mcp`, `/api/websocket` or `/auth/token`. `reason` is
+always `invalid_request_auth`; `rejection` says why (see
+[Rejected requests](#rejected-requests)). `endpoint` is the route pattern (`/api/mcp`,
 `/api/hassio_ingress/{token}/{path}`), never the literal path or query string,
 which can carry secrets. Login flow attempts always report `/auth/login_flow`.
 Rejections on ordinary views such as `/api/mcp` require IP banning to be
@@ -76,6 +78,43 @@ The `reason` field of `login_detail_failed`:
 `invalid_mfa_code` is the one that matters most: someone had the right
 password and was stopped only by 2FA. `mfa_pending` that never turns into a
 successful login means the same.
+
+### Rejected requests
+
+Core rejects every request with the same 401. Since 0.7.1, Login Detail
+works out why from what the request carried, and puts it in `rejection` on
+the event and in `reason` in the sign-in log and the log line:
+
+| `rejection` | Meaning | User and client |
+|---|---|---|
+| `no_credentials` | No token at all - for example an MCP client's first call, which core answers with 401 and `WWW-Authenticate` so the client starts OAuth. | - |
+| `expired_token` | A token that really was issued to this user, but has expired. | yes |
+| `user_not_allowed` | A valid, unexpired token, but core does not let the user in: the user is set to local access only and connects from outside. | yes |
+| `unknown_or_revoked_token` | A token for a refresh token that does not exist (any more) - revoked, logged out, or the user was deactivated - or a forged or garbled token. | - |
+| `malformed_credentials` | An `Authorization` header that is not `Bearer <token>`, or a websocket auth message without a usable token. | - |
+| `invalid_signed_path` | A signed path (`authSig`) that core did not accept. | - |
+| `not_admin` | A valid user, turned away by the endpoint because they are not an administrator - for example the MCP server with "require admin" on. | yes |
+| `permission_denied` | The same for an administrator (another permission check). | yes |
+| `invalid_auth_request` | `/auth/token` or `/auth/login_flow` rejected the request, for example a refresh token that no longer exists. The request body is not read. | - |
+
+**User and client are only filled in when it is proven.** For a rejected
+token, the token's signature is checked against the key of the refresh token
+it names - the same check core makes, except for the expiry. Only if it
+matches are `user_id`, `username`, `client_id` (for example the OAuth client
+ID of an MCP client), `token_type` (`normal`, `long_lived_access_token` or
+`system`) and, for long-lived tokens, `client_name` (the name the user gave
+the token) filled in. A forged, unsigned or unknown token gets `null` in all
+of them, whatever it claims. For `not_admin` and `permission_denied`, core
+has already verified the token. `username` comes from the user's stored
+credentials, never from the request.
+
+**The token itself is never stored, logged or shown** - not the token, not
+its signature, not its payload. Only what is derived from it is kept. The
+check is two JWT decodes in memory after core has answered: no I/O, no
+network calls, and a failure only means the fields stay `null`.
+
+Rejected requests stored before 0.7.1 show `invalid_request_auth` as their
+reason.
 
 ## Entities
 
@@ -139,8 +178,9 @@ startup, after which the line can be removed.
 
 An admin-only panel, **Sign-in log**, in the sidebar shows every recorded
 event as one row, newest first: time, type, reason, username, user ID, login
-method, IP address, endpoint, user agent and flow ID. Repeated rejections
-from the same IP address on the same endpoint are one row with a count. The
+method, client, IP address, endpoint, user agent and flow ID. Repeated
+rejections from the same IP address on the same endpoint, for the same
+reason, user and client, are one row with a count. The
 table can be filtered by type, user, IP address (prefix, so `192.0.2.`
 matches the range) and time span.
 
@@ -156,9 +196,16 @@ users who are not administrators. Non-admin users do not see the panel.
 ```
 
 All filters are optional: `log_type` (`auth.login_failed`,
-`auth.login_success`, `auth.request_rejected`), `username`, `user_id`, `ip`,
-`start_time`, `end_time` (ISO 8601) and `limit`. The result is
+`auth.login_success`, `auth.request_rejected`), `reason` (exact, for example
+`expired_token`), `username`, `user_id`, `ip`, `start_time`, `end_time`
+(ISO 8601) and `limit`. The result is
 `{"entries": [...], "total": n, "max_entries": n, "max_days": n}`.
+
+Each entry has `ts`, `type`, `reason`, `username`, `user_id`,
+`auth_provider`, `ip`, `hostname`, `endpoint`, `user_agent`, `flow_id`,
+`count`, and since 0.7.1 `client_id`, `client_name` and `token_type`. The
+last three are only set for a rejected request whose token was proven (see
+[Rejected requests](#rejected-requests)); otherwise they are `null`.
 
 **Options** (Settings → Devices & services → Login Detail → Configure):
 
@@ -209,6 +256,9 @@ where:
   the recorder database. The storage file is bounded by the retention options
   (default 7 days and 500 entries); the log, the recorder and backups follow
   their own retention.
+- A rejected request names a user, an OAuth client ID and the name of a
+  long-lived token only when the token's signature proves it. Tokens
+  themselves are never stored.
 - The username of a failed login is only stored if it belongs to an existing
   user, in the form Home Assistant stores it. Anything else - including a
   password typed into the username field - is recorded as `null`. (Before
@@ -273,6 +323,21 @@ usernames and IP addresses gone.
   does not log these requests and `login_detail_request_rejected` is not fired
   for them. The login flow, `/auth/token` and `/api/websocket` call core
   directly and are reported either way.
+- **Calls without a token count towards the IP ban.** Core counts every
+  rejected request against the IP address - also an MCP client's first call
+  without a token, its calls with an expired token, and `not_admin`. With
+  `login_attempts_threshold` set, enough of them ban the client's IP address
+  for good (`ip_bans.yaml`); the counter is only reset by a successful login
+  or websocket authentication *from the same address*, which never happens
+  for a cloud MCP client, whose calls come from the provider's
+  servers. Behind a reverse proxy that is not trusted, the proxy's address
+  is banned - and with it everyone. This is core's behaviour; Login Detail
+  only reports it. Without `login_attempts_threshold` (the default), nothing
+  is counted or banned.
+- **`not_admin` on websocket commands is not reported.** A websocket command
+  that requires admin answers with an error message and does not call core's
+  `process_wrong_login`, so there is nothing to capture without patching core.
+  `not_admin` covers REST views such as `/api/mcp`.
 - **A strict `logger.default` silences the log lines.** With for example
   `logger: default: error`, nothing is written to the log - the events are
   still fired. To keep the log lines, add:

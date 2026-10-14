@@ -22,6 +22,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
 DOMAIN = "login_detail_probe3"
@@ -49,6 +50,9 @@ LOG_FIELDS = {
     "user_agent",
     "flow_id",
     "count",
+    "client_id",
+    "client_name",
+    "token_type",
 }
 
 _LOGGER = logging.getLogger(__name__)
@@ -197,7 +201,7 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
         panel is not None
         and panel.require_admin is True
         and panel.sidebar_title == "Sign-in log"
-        and "?v=0.7.0"
+        and f"?v={(await async_get_integration(hass, TARGET)).version}"
         in (panel.config or {}).get("_panel_custom", {}).get("module_url", ""),
         None if panel is None else panel.to_response(),
     )

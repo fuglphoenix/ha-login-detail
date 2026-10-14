@@ -6,11 +6,19 @@ returns the stored history as log entries, newest first, in the shape
 proposed for core in home-assistant/architecture#1346:
 
     ts, type, reason, username, user_id, auth_provider, ip, hostname,
-    endpoint, user_agent, flow_id, count
+    endpoint, user_agent, flow_id, count,
+    client_id, client_name, token_type   (rejected requests, 0.7.1)
+
+For a rejected request `reason` says why (no_credentials, expired_token,
+not_admin, ... - see rejection.py), and username, user_id, client_id,
+client_name and token_type are only set when the token behind it has been
+proven to be that user's. Entries stored before 0.7.1 say
+`invalid_request_auth`.
 
 Optional filters, all combined with AND:
 
     log_type     auth.login_failed | auth.login_success | auth.request_rejected
+    reason       exact, for example "expired_token"
     username     exact, case-insensitive
     user_id      exact
     ip           prefix - "192.0.2." matches the whole range
@@ -57,14 +65,18 @@ def log_type_of(result: str | None) -> str:
 def as_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """A stored history entry as a sign-in log entry.
 
-    Entries stored before 0.7.0 have no user_id or user_agent; they come out
-    as None.
+    Entries stored before 0.7.0 have no user_id or user_agent, and rejected
+    requests stored before 0.7.1 have no reason, client or token type; they
+    come out as None, and the reason as the stored result.
     """
     result = entry.get("result")
+    reason = None if result == RESULT_OK else result
+    if result == RESULT_REQUEST_REJECTED:
+        reason = entry.get("reason") or result
     return {
         "ts": entry.get("timestamp"),
         "type": log_type_of(result),
-        "reason": None if result == RESULT_OK else result,
+        "reason": reason,
         "username": entry.get("username"),
         "user_id": entry.get("user_id"),
         "auth_provider": entry.get("auth_provider"),
@@ -74,6 +86,9 @@ def as_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "user_agent": entry.get("user_agent"),
         "flow_id": entry.get("flow_id"),
         "count": int(entry.get("count") or 1),
+        "client_id": entry.get("client_id"),
+        "client_name": entry.get("client_name"),
+        "token_type": entry.get("token_type"),
     }
 
 
@@ -88,6 +103,7 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     {
         probatio.Required("type"): f"{DOMAIN}/sign_in_log/list",
         probatio.Optional("log_type"): probatio.In(LOG_TYPES),
+        probatio.Optional("reason"): str,
         probatio.Optional("username"): str,
         probatio.Optional("user_id"): str,
         probatio.Optional("ip"): str,
@@ -130,6 +146,8 @@ def ws_sign_in_log_list(
     for entry in history:
         log_entry = as_log_entry(entry)
         if "log_type" in msg and log_entry["type"] != msg["log_type"]:
+            continue
+        if "reason" in msg and log_entry["reason"] != msg["reason"]:
             continue
         if username and (log_entry["username"] or "").casefold() != username:
             continue

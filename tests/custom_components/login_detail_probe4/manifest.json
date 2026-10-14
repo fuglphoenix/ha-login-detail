@@ -1,0 +1,11 @@
+{
+  "domain": "login_detail_probe4",
+  "name": "login_detail acceptance probe D",
+  "after_dependencies": ["login_detail"],
+  "codeowners": [],
+  "dependencies": ["http", "websocket_api", "mcp_server"],
+  "documentation": "https://github.com/fuglphoenix/ha-login-detail",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "0.7.1"
+}

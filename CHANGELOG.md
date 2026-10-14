@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-14
+
+### Added
+- **Why a request was rejected.** `login_detail_request_rejected` has a new
+  field `rejection`, and the sign-in log and the log line show it as the
+  reason: `no_credentials`, `expired_token`, `user_not_allowed`,
+  `unknown_or_revoked_token`, `malformed_credentials`, `invalid_signed_path`,
+  `not_admin`, `permission_denied` or `invalid_auth_request`. See
+  "Rejected requests" in README.md.
+- **Who sent it, when that is proven.** For a rejected token, the signature
+  is checked against the key of the refresh token it names (everything core
+  checks except the expiry). Only if it matches, the event, the history and
+  the sign-in log get `user_id`, `username`, `client_id`, `token_type` and,
+  for a long-lived token, `client_name`. Forged, unsigned, unknown and
+  revoked tokens name nobody. The token itself is never stored or logged.
+- `not_admin` for a valid user turned away by an endpoint that requires an
+  administrator - for example the MCP server with "require admin" - without
+  patching core.
+- Websocket command `login_detail/sign_in_log/list`: filter `reason`, and the
+  entry fields `client_id`, `client_name` and `token_type`.
+- A "Client" column in the Sign-in log panel (the long-lived token's name or
+  the client ID, with the token type on hover).
+- Acceptance probe D (`login_detail_probe4`) for all of the above.
+
+### Changed
+- Rejected requests from the same IP address on the same endpoint are only
+  folded together if they also have the same reason, user and client.
+- The log line has three more fields, `client_id`, `token_type` and
+  `client_name`, on every event (`None` unless proven), so all lines keep
+  one format.
+- `AuthPhase.async_handle` of the websocket is patched too, to see the token
+  in the auth message. It only passes the token on, in memory, for the
+  duration of the call.
+
+The `reason` of `login_detail_request_rejected` is still
+`invalid_request_auth`. No events, event fields, entity IDs or `unique_id`s
+were removed or renamed.
+
 ## [0.7.0] - 2026-10-14
 
 ### Added
@@ -166,7 +204,8 @@ unchanged.
   a failed login attempt
   ([home-assistant/core#148110](https://github.com/home-assistant/core/issues/148110)).
 
-[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/fuglphoenix/ha-login-detail/releases/tag/v0.5.0

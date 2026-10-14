@@ -16,7 +16,14 @@ is rejected for invalid authentication - a wrong or expired token on
 /api/mcp, /api/websocket, /auth/token and so on. Those are not login flows and
 carry no username, so they get their own event:
 
-  login_detail_request_rejected   ip_address, endpoint, reason, user_agent
+  login_detail_request_rejected   ip_address, endpoint, reason, rejection,
+                                  user_id, username, client_id, client_name,
+                                  token_type, user_agent
+
+`reason` is always `invalid_request_auth`; `rejection` says why (0.7.1,
+see rejection.py). The user and client are only filled in when the token
+behind the request has been proven to be theirs - the token itself is never
+kept.
 
 Every event is also written as one line to the log - failed login attempts at
 WARNING, everything else at INFO - stored in `.storage/login_detail_history`
@@ -65,8 +72,8 @@ seeing.
 
 Written against Home Assistant 2026.10.1. The monkeypatch targets private API
 (`HassLoginFlow.async_step_init`, `LoginFlow.async_step_mfa`,
-`AuthManagerFlowManager.async_finish_flow`, `HassAuthProvider.data`, and
-`process_wrong_login` in
+`AuthManagerFlowManager.async_finish_flow`, `HassAuthProvider.data`,
+`AuthPhase.async_handle`, and `process_wrong_login` in
 `homeassistant.components.http.ban` and
 `homeassistant.components.websocket_api.auth`) and may stop working with any
 core upgrade. If patching fails, it is logged at startup and login continues
@@ -125,6 +132,7 @@ from .const import (
     SIGNAL_UPDATED,
     USER_AGENT_MAX_LENGTH,
 )
+from .rejection import ATTRIBUTION_FIELDS, classify, websocket_token
 from .websocket import async_register_websocket_commands, log_type_of
 
 _LOGGER = logging.getLogger(__name__)
@@ -246,14 +254,15 @@ class LoginDetailData:
         seconds. Without folding, one such client would push every real login
         attempt out of the bounded history. A repeat from the same IP address
         on the same endpoint within REJECTED_FOLD_WINDOW raises the count of
-        the existing entry and moves it to the front instead.
+        the existing entry and moves it to the front instead - but only if it
+        was rejected for the same reason and is attributed to the same user
+        and client, so an unauthenticated probe never hides a known user's
+        expired token, or the other way round.
         """
         now = dt_util.parse_datetime(entry["timestamp"])
         for index, previous in enumerate(self.history):
-            if (
-                previous.get("result") != RESULT_REQUEST_REJECTED
-                or previous.get("ip_address") != entry.get("ip_address")
-                or previous.get("endpoint") != entry.get("endpoint")
+            if previous.get("result") != RESULT_REQUEST_REJECTED or any(
+                previous.get(key) != entry.get(key) for key in _FOLD_KEYS
             ):
                 continue
             seen = dt_util.parse_datetime(previous.get("timestamp") or "")
@@ -262,8 +271,8 @@ class LoginDetailData:
             del self.history[index]
             previous["timestamp"] = entry["timestamp"]
             previous["count"] = int(previous.get("count") or 1) + 1
-            # The newest client wins - a fold is one IP on one endpoint, and
-            # it is usually the same client anyway.
+            # The newest user agent wins - a fold is one IP on one endpoint
+            # for one reason and one client, so it is usually the same anyway.
             previous["user_agent"] = entry.get("user_agent")
             self.history.insert(0, previous)
             self._async_save()
@@ -312,6 +321,10 @@ class LoginDetailData:
             self._host_cache.clear()
         self._host_cache[ip_address] = hostname
         return hostname
+
+
+# What must match for a rejected request to be folded into an earlier one.
+_FOLD_KEYS = ("ip_address", "endpoint", "reason", "user_id", "client_id")
 
 
 def _report(
@@ -367,7 +380,8 @@ def _log_line(result: str, data: dict[str, Any]) -> None:
 
     A failed login attempt is a WARNING. Everything else - a login, a login
     waiting for 2FA, a rejected request (which core has already logged at
-    WARNING with the full URL) - is INFO.
+    WARNING with the full URL) - is INFO. The client fields are only set for
+    a rejected request whose token has been proven to be the client's.
     """
     level = (
         logging.INFO
@@ -377,12 +391,16 @@ def _log_line(result: str, data: dict[str, Any]) -> None:
     _LOGGER.log(
         level,
         "Sign-in log: type=%s reason=%s username=%s user_id=%s auth_provider=%s "
-        "ip=%s endpoint=%s user_agent=%r flow_id=%s",
+        "client_id=%s token_type=%s client_name=%r ip=%s endpoint=%s "
+        "user_agent=%r flow_id=%s",
         log_type_of(result),
-        None if result == RESULT_OK else result,
+        None if result == RESULT_OK else data.get("rejection") or result,
         data.get("username"),
         data.get("user_id"),
         data.get("auth_provider"),
+        data.get("client_id"),
+        data.get("token_type"),
+        data.get("client_name"),
         data.get("ip_address"),
         data.get("endpoint"),
         data.get("user_agent"),
@@ -390,12 +408,18 @@ def _log_line(result: str, data: dict[str, Any]) -> None:
     )
 
 
-def _report_rejected(hass: HomeAssistant, request: Any) -> None:
+def _report_rejected(
+    hass: HomeAssistant, request: Any, *, websocket: bool = False
+) -> None:
     """Log, fire and store one rejected request. Must never raise."""
+    endpoint = _endpoint_of(request)
+    found = classify(hass, request, endpoint, websocket=websocket)
     data = {
         "ip_address": str(request.remote) if request.remote is not None else None,
-        "endpoint": _endpoint_of(request),
+        "endpoint": endpoint,
         "reason": RESULT_REQUEST_REJECTED,
+        "rejection": found["reason"],
+        **{key: found[key] for key in ATTRIBUTION_FIELDS},
         "user_agent": _user_agent_of(request),
     }
     _log_line(RESULT_REQUEST_REJECTED, data)
@@ -408,8 +432,12 @@ def _report_rejected(hass: HomeAssistant, request: Any) -> None:
         {
             "timestamp": dt_util.utcnow().isoformat(),
             "result": RESULT_REQUEST_REJECTED,
-            "username": None,
-            "user_id": None,
+            "reason": data["rejection"],
+            "username": data["username"],
+            "user_id": data["user_id"],
+            "client_id": data["client_id"],
+            "client_name": data["client_name"],
+            "token_type": data["token_type"],
             "ip_address": data["ip_address"],
             "auth_provider": None,
             "flow_id": None,
@@ -589,6 +617,8 @@ class _CorePatch:
         original_mfa = LoginFlow.async_step_mfa
         original_finish_flow = AuthManagerFlowManager.async_finish_flow
         original_wrong_login = http_ban.process_wrong_login
+        original_ws_wrong_login = websocket_auth.process_wrong_login
+        original_ws_auth = websocket_auth.AuthPhase.async_handle
 
         async def async_step_init(
             self: HassLoginFlow, user_input: dict[str, str] | None = None
@@ -691,6 +721,29 @@ class _CorePatch:
             except Exception:  # must never break request handling
                 _LOGGER.exception("login_detail: could not report rejected request")
 
+        async def ws_process_wrong_login(request: Any) -> None:
+            await original_ws_wrong_login(request)
+            try:
+                _report_rejected(hass, request, websocket=True)
+            except Exception:  # must never break request handling
+                _LOGGER.exception("login_detail: could not report rejected request")
+
+        async def ws_async_handle(self: websocket_auth.AuthPhase, msg: Any) -> Any:
+            # Only hands the token on to ws_process_wrong_login, in this task
+            # and for this call only. "" for credentials that are not a token.
+            token: str | None = None
+            if isinstance(msg, dict):
+                access_token = msg.get("access_token")
+                if isinstance(access_token, str):
+                    token = access_token
+                elif "access_token" in msg or "api_password" in msg:
+                    token = ""
+            reset = websocket_token.set(token)
+            try:
+                return await original_ws_auth(self, msg)
+            finally:
+                websocket_token.reset(reset)
+
         self._install(HassLoginFlow, "async_step_init", async_step_init)
         self._install(LoginFlow, "async_step_mfa", async_step_mfa)
         self._install(AuthManagerFlowManager, "async_finish_flow", async_finish_flow)
@@ -701,7 +754,8 @@ class _CorePatch:
         # alone on purpose: a wrong password there is already reported above,
         # with the username.
         self._install(http_ban, "process_wrong_login", process_wrong_login)
-        self._install(websocket_auth, "process_wrong_login", process_wrong_login)
+        self._install(websocket_auth, "process_wrong_login", ws_process_wrong_login)
+        self._install(websocket_auth.AuthPhase, "async_handle", ws_async_handle)
 
         _LOGGER.info(
             "login_detail active - logins fire the events %s and %s, "

@@ -18,6 +18,8 @@ from typing import Any
 from homeassistant.auth import AuthManagerFlowManager
 from homeassistant.auth.providers import LoginFlow
 from homeassistant.auth.providers.homeassistant import HassLoginFlow
+from homeassistant.components.http import ban as http_ban
+from homeassistant.components.websocket_api import auth as websocket_auth
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
 from homeassistant.core import HomeAssistant
@@ -164,6 +166,12 @@ def _is_patched() -> dict[str, bool]:
         in getattr(LoginFlow.async_step_mfa, "__module__", ""),
         "AuthManagerFlowManager.async_finish_flow": "login_detail"
         in getattr(AuthManagerFlowManager.async_finish_flow, "__module__", ""),
+        "ban.process_wrong_login": "login_detail"
+        in getattr(http_ban.process_wrong_login, "__module__", ""),
+        "websocket_api.auth.process_wrong_login": "login_detail"
+        in getattr(websocket_auth.process_wrong_login, "__module__", ""),
+        "AuthPhase.async_handle": "login_detail"
+        in getattr(websocket_auth.AuthPhase.async_handle, "__module__", ""),
     }
 
 
