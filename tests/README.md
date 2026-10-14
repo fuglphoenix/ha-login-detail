@@ -66,7 +66,7 @@ cat /usr/src/login_detail_test/report.json
 `login_detail:` and `login_detail_probe:` from `configuration.yaml`, and add
 `login_detail_probe2:`.
 
-Expected result for 0.5.0 on Home Assistant 2026.10.1: **A: 35/35, B: 9/9.**
+Expected result for 0.6.0 on Home Assistant 2026.10.1: **A: 35/35, B: 9/9.**
 
 ### Two things to get right
 

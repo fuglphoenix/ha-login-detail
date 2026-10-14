@@ -6,8 +6,16 @@ The former is a known, open gap in core: home-assistant/core#148110.
 
 This integration monkeypatches the login flow and fires two events:
 
-  login_detail_failed      username, ip_address, reason, flow_id, auth_provider
-  login_detail_succeeded   username, ip_address, flow_id, auth_provider
+  login_detail_failed      username, ip_address, reason, flow_id, auth_provider,
+                           endpoint
+  login_detail_succeeded   username, ip_address, flow_id, auth_provider, endpoint
+
+It also wraps core's `process_wrong_login`, which handles every request that
+is rejected for invalid authentication - a wrong or expired token on
+/api/mcp, /api/websocket, /auth/token and so on. Those are not login flows and
+carry no username, so they get their own event:
+
+  login_detail_request_rejected   ip_address, endpoint, reason
 
 Failed login attempts are logged at WARNING, successful logins at INFO. The
 events are stored in `.storage/login_detail_history` and exposed as sensors
@@ -42,8 +50,10 @@ seeing.
 
 Written against Home Assistant 2026.10.1. The monkeypatch targets private API
 (`HassLoginFlow.async_step_init`, `LoginFlow.async_step_mfa`,
-`AuthManagerFlowManager.async_finish_flow`) and may stop working with any core
-upgrade. If patching fails, it is logged at startup and login continues
+`AuthManagerFlowManager.async_finish_flow`, and `process_wrong_login` in
+`homeassistant.components.http.ban` and
+`homeassistant.components.websocket_api.auth`) and may stop working with any
+core upgrade. If patching fails, it is logged at startup and login continues
 unchanged.
 """
 
@@ -56,6 +66,8 @@ from typing import Any
 from homeassistant.auth import AuthManagerFlowManager
 from homeassistant.auth.providers import LoginFlow
 from homeassistant.auth.providers.homeassistant import HassLoginFlow
+from homeassistant.components.http import ban as http_ban
+from homeassistant.components.websocket_api import auth as websocket_auth
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, callback
@@ -68,11 +80,15 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     DOMAIN,
+    ENDPOINT_LOGIN_FLOW,
     EVENT_LOGIN_FAILED,
     EVENT_LOGIN_SUCCEEDED,
+    EVENT_REQUEST_REJECTED,
     HISTORY_LIMIT,
+    REJECTED_FOLD_WINDOW,
     RESULT_MFA_PENDING,
     RESULT_OK,
+    RESULT_REQUEST_REJECTED,
     SIGNAL_UPDATED,
 )
 
@@ -86,6 +102,9 @@ STORAGE_VERSION = 1
 # Wait a little before writing the history to disk, so several attempts in a
 # row become a single write.
 SAVE_DELAY = 10
+
+# An endpoint is stored as the route pattern, so this only bounds odd cases.
+ENDPOINT_MAX_LENGTH = 200
 
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
@@ -145,8 +164,39 @@ class LoginDetailData:
         if ip_address and not cached:
             self.hass.async_create_background_task(
                 self._async_fill_hostname(entry),
-                f"{DOMAIN}_hostname_{entry.get('flow_id')}",
+                f"{DOMAIN}_hostname_{entry.get('flow_id') or ip_address}",
             )
+
+    @callback
+    def async_record_rejected(self, entry: dict[str, Any]) -> None:
+        """Record a rejected request, folding repeats into one entry.
+
+        A client with a stale token retries on its own, often every few
+        seconds. Without folding, one such client would push every real login
+        attempt out of the 50-entry history. A repeat from the same IP address
+        on the same endpoint within REJECTED_FOLD_WINDOW raises the count of
+        the existing entry and moves it to the front instead.
+        """
+        now = dt_util.parse_datetime(entry["timestamp"])
+        for index, previous in enumerate(self.history):
+            if (
+                previous.get("result") != RESULT_REQUEST_REJECTED
+                or previous.get("ip_address") != entry.get("ip_address")
+                or previous.get("endpoint") != entry.get("endpoint")
+            ):
+                continue
+            seen = dt_util.parse_datetime(previous.get("timestamp") or "")
+            if now is None or seen is None or now - seen > REJECTED_FOLD_WINDOW:
+                break
+            del self.history[index]
+            previous["timestamp"] = entry["timestamp"]
+            previous["count"] = int(previous.get("count") or 1) + 1
+            self.history.insert(0, previous)
+            self._async_save()
+            async_dispatcher_send(self.hass, SIGNAL_UPDATED)
+            return
+        entry["count"] = 1
+        self.async_record(entry)
 
     @callback
     def _async_supersede_pending(self, entry: dict[str, Any]) -> None:
@@ -205,6 +255,7 @@ def _report(
         "reason": result,
         "flow_id": flow_id,
         "auth_provider": _provider_of(flow),
+        "endpoint": ENDPOINT_LOGIN_FLOW,
     }
 
     if result == RESULT_OK:
@@ -248,8 +299,60 @@ def _report(
             "ip_address": data["ip_address"],
             "auth_provider": data["auth_provider"],
             "flow_id": flow_id,
+            "endpoint": ENDPOINT_LOGIN_FLOW,
         }
     )
+
+
+def _report_rejected(hass: HomeAssistant, request: Any) -> None:
+    """Log and fire one rejected request. Must never raise.
+
+    Core has already logged the full URL at WARNING. This line only adds what
+    the history stores, so it is INFO.
+    """
+    data = {
+        "ip_address": str(request.remote) if request.remote is not None else None,
+        "endpoint": _endpoint_of(request),
+        "reason": RESULT_REQUEST_REJECTED,
+    }
+    _LOGGER.info(
+        "Request rejected: ip=%s endpoint=%s", data["ip_address"], data["endpoint"]
+    )
+    hass.bus.async_fire(EVENT_REQUEST_REJECTED, data)
+
+    store = hass.data.get(DOMAIN)
+    if not isinstance(store, LoginDetailData):
+        return
+    store.async_record_rejected(
+        {
+            "timestamp": dt_util.utcnow().isoformat(),
+            "result": RESULT_REQUEST_REJECTED,
+            "username": None,
+            "ip_address": data["ip_address"],
+            "auth_provider": None,
+            "flow_id": None,
+            "endpoint": data["endpoint"],
+        }
+    )
+
+
+def _endpoint_of(request: Any) -> str | None:
+    """The route pattern of the request, not the literal path.
+
+    `/api/hassio_ingress/{token}/{path}` rather than the path with the token
+    in it: path parameters can be secrets, and the query string is never
+    read. Falls back to the plain path for a request that matched no route.
+    """
+    endpoint: str | None = None
+    try:
+        resource = request.match_info.route.resource
+        if resource is not None:
+            endpoint = resource.canonical
+    except Exception:  # noqa: BLE001 - fall back to the plain path
+        endpoint = None
+    if not endpoint:
+        endpoint = getattr(request, "path", None)
+    return endpoint[:ENDPOINT_MAX_LENGTH] if endpoint else None
 
 
 def _provider_of(flow: Any) -> str | None:
@@ -300,14 +403,15 @@ class _CorePatch:
     """
 
     def __init__(self) -> None:
-        self._applied: dict[tuple[type, str], tuple[Any, bool]] = {}
-        self._ours: dict[tuple[type, str], Any] = {}
+        # The owner is a class or, for process_wrong_login, a module.
+        self._applied: dict[tuple[Any, str], tuple[Any, bool]] = {}
+        self._ours: dict[tuple[Any, str], Any] = {}
 
     @property
     def applied(self) -> bool:
         return bool(self._applied)
 
-    def _install(self, owner: type, name: str, replacement: Any) -> None:
+    def _install(self, owner: Any, name: str, replacement: Any) -> None:
         original = getattr(owner, name)
         # If the method was inherited, it must be removed again - not copied
         # down onto the subclass as its own.
@@ -324,6 +428,7 @@ class _CorePatch:
         original_init = HassLoginFlow.async_step_init
         original_mfa = LoginFlow.async_step_mfa
         original_finish_flow = AuthManagerFlowManager.async_finish_flow
+        original_wrong_login = http_ban.process_wrong_login
 
         async def async_step_init(
             self: HassLoginFlow, user_input: dict[str, str] | None = None
@@ -410,14 +515,31 @@ class _CorePatch:
                 _LOGGER.exception("login_detail: could not report completed login")
             return outcome
 
+        async def process_wrong_login(request: Any) -> None:
+            await original_wrong_login(request)
+            try:
+                _report_rejected(hass, request)
+            except Exception:  # must never break request handling
+                _LOGGER.exception("login_detail: could not report rejected request")
+
         self._install(HassLoginFlow, "async_step_init", async_step_init)
         self._install(LoginFlow, "async_step_mfa", async_step_mfa)
         self._install(AuthManagerFlowManager, "async_finish_flow", async_finish_flow)
+        # ban.py looks the name up in its own module at call time - that
+        # covers the ban middleware (401 on /api/mcp and every other view) and
+        # @log_invalid_auth (/auth/token). The websocket imported the name, so
+        # it gets its own patch. login_flow.py imported it too and is left
+        # alone on purpose: a wrong password there is already reported above,
+        # with the username.
+        self._install(http_ban, "process_wrong_login", process_wrong_login)
+        self._install(websocket_auth, "process_wrong_login", process_wrong_login)
 
         _LOGGER.info(
-            "login_detail active - logins fire the events %s and %s",
+            "login_detail active - logins fire the events %s and %s, "
+            "rejected requests fire %s",
             EVENT_LOGIN_FAILED,
             EVENT_LOGIN_SUCCEEDED,
+            EVENT_REQUEST_REJECTED,
         )
 
     def revert(self) -> None:

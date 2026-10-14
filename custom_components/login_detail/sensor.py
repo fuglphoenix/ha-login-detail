@@ -4,7 +4,8 @@ The entities are deliberately few and flat:
 
   sensor.login_seneste_haendelse   latest login (ok or failed)
   sensor.login_ok_24t              completed logins in the last 24 hours
-  sensor.login_mislykkede_24t      failed login attempts in the last 24 hours
+  sensor.login_mislykkede_24t      failed login attempts and rejected requests
+                                   in the last 24 hours, per endpoint
   sensor.login_ip_adresser_24t     unique IP addresses in the last 24 hours
   sensor.login_historik            the most recent stored events (attribute)
   sensor.login_aktive_sessioner    active tokens with the last used IP address
@@ -50,6 +51,23 @@ def _tally(values: Any) -> dict[str, int]:
     return dict(counted.most_common(10))
 
 
+def _weight(entry: dict[str, Any]) -> int:
+    """Attempts behind one history entry - rejected requests are folded."""
+    try:
+        return max(int(entry.get("count") or 1), 1)
+    except (TypeError, ValueError):
+        return 1
+
+
+def _tally_entries(entries: list[dict[str, Any]], key: str) -> dict[str, int]:
+    """Like _tally, but each entry counts as many attempts as it folds."""
+    counted: Counter[str] = Counter()
+    for entry in entries:
+        value = entry.get(key)
+        counted[str(value) if value is not None else "ukendt"] += _weight(entry)
+    return dict(counted.most_common(10))
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -92,6 +110,8 @@ def _as_text(entry: dict[str, Any]) -> dict[str, Any]:
         "ip": entry.get("ip_address"),
         "vaert": entry.get("hostname"),
         "metode": entry.get("auth_provider"),
+        "endpoint": entry.get("endpoint"),
+        "count": _weight(entry),
     }
 
 
@@ -169,10 +189,9 @@ class LoginLatestSensor(LoginDetailSensor):
         if not self._data.history:
             return None
         entry = self._data.history[0]
-        value = (
-            f"{entry.get('result')} · {entry.get('username')} · "
-            f"{entry.get('ip_address')}"
-        )
+        # A rejected request has no username; the endpoint says more.
+        who = entry.get("username") or entry.get("endpoint")
+        value = f"{entry.get('result')} · {who} · {entry.get('ip_address')}"
         return value[:255]
 
     @property
@@ -209,14 +228,18 @@ class LoginCountSensor(LoginDetailSensor):
 
     @property
     def native_value(self) -> int:
-        return len(self._matching())
+        return sum(_weight(entry) for entry in self._matching())
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         matching = self._matching()
+        # Rejected requests have no username; leave them out of that tally
+        # instead of counting them as "ukendt".
+        with_username = [entry for entry in matching if entry.get("username")]
         return {
-            "ip_fordeling": _tally(entry.get("ip_address") for entry in matching),
-            "brugernavne": _tally(entry.get("username") for entry in matching),
+            "ip_fordeling": _tally_entries(matching, "ip_address"),
+            "brugernavne": _tally_entries(with_username, "username"),
+            "endpoints": _tally_entries(matching, "endpoint"),
             "seneste": _local(matching[0].get("timestamp")) if matching else None,
         }
 
@@ -242,15 +265,19 @@ class LoginUniqueIpSensor(LoginDetailSensor):
                     "mislykkede": 0,
                     "seneste": _local(entry.get("timestamp")),
                     "brugere": [],
+                    "endpoints": [],
                 },
             )
             if entry.get("result") == RESULT_OK:
-                row["ok"] += 1
+                row["ok"] += _weight(entry)
             else:
-                row["mislykkede"] += 1
+                row["mislykkede"] += _weight(entry)
             username = entry.get("username")
             if username and username not in row["brugere"]:
                 row["brugere"].append(username)
+            endpoint = entry.get("endpoint")
+            if endpoint and endpoint not in row["endpoints"]:
+                row["endpoints"].append(endpoint)
         return per_ip
 
     @property

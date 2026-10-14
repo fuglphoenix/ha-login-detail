@@ -4,12 +4,12 @@
   "after_dependencies": ["recorder"],
   "codeowners": ["@fuglphoenix"],
   "config_flow": true,
-  "dependencies": [],
+  "dependencies": ["http"],
   "documentation": "https://github.com/fuglphoenix/ha-login-detail",
   "integration_type": "service",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/fuglphoenix/ha-login-detail/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.5.0"
+  "version": "0.6.0"
 }

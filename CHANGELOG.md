@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-14
+
+### Added
+- Requests rejected for invalid authentication outside the login flow - a
+  wrong or expired token on `/api/mcp`, `/api/websocket`, `/auth/token` or any
+  other authenticated endpoint - are now recorded. They fire the new event
+  `login_detail_request_rejected` (`ip_address`, `endpoint`, `reason`) and are
+  stored in the history with `result: invalid_request_auth`.
+- An `endpoint` field on every event and history entry. Login flow attempts
+  report `/auth/login_flow`; rejected requests report the route pattern, for
+  example `/api/mcp` or `/api/hassio_ingress/{token}/{path}` - never the
+  literal path or the query string, which can carry secrets.
+- Sensor attributes: `endpoints` (attempts per endpoint) on
+  `sensor.login_ok_24t` and `sensor.login_mislykkede_24t`, `endpoints` per IP
+  address on `sensor.login_ip_adresser_24t`, and `endpoint` and `count` on the
+  entries of `sensor.login_seneste_haendelse` and `sensor.login_historik`.
+
+### Changed
+- `sensor.login_mislykkede_24t` and the `mislykkede` count per IP address now
+  include rejected requests. Expect the number to rise if a client with a
+  stale token is polling your instance.
+- Repeated rejections from the same IP address on the same endpoint within 10
+  minutes are folded into one history entry with a `count`, so a retrying
+  client cannot push real login attempts out of the 50-entry history.
+- `sensor.login_seneste_haendelse` shows the endpoint instead of the username
+  for a rejected request, which has none.
+- `manifest.json` declares `http` as a dependency, which hassfest requires for
+  importing `homeassistant.components.http`.
+- The integration now also patches `process_wrong_login` in
+  `homeassistant.components.http.ban` and
+  `homeassistant.components.websocket_api.auth` (private core API). Core's own
+  handling - the log line, the notification and IP banning - runs unchanged
+  and first.
+
 ## [0.5.0] - 2026-10-14
 
 No change in behaviour. Events, event fields, entity IDs and `unique_id`s are
@@ -96,5 +130,6 @@ unchanged.
   a failed login attempt
   ([home-assistant/core#148110](https://github.com/home-assistant/core/issues/148110)).
 
-[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/fuglphoenix/ha-login-detail/releases/tag/v0.5.0

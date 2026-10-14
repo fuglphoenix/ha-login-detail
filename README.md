@@ -22,8 +22,8 @@ Passwords and TOTP codes are never read, logged or forwarded.
 
 > [!WARNING]
 > This integration **monkeypatches private Home Assistant core API**:
-> `HassLoginFlow.async_step_init`, `LoginFlow.async_step_mfa` and
-> `AuthManagerFlowManager.async_finish_flow`. Core can change these at any
+> `HassLoginFlow.async_step_init`, `LoginFlow.async_step_mfa`,
+> `AuthManagerFlowManager.async_finish_flow` and `process_wrong_login`. Core can change these at any
 > time. After a Home Assistant upgrade the integration may silently stop
 > reporting - no error, nothing breaks, logins keep working, you just stop
 > getting events. All patched code is wrapped so that a failure can never
@@ -34,10 +34,21 @@ Passwords and TOTP codes are never read, logged or forwarded.
 
 | Event | Fields |
 |---|---|
-| `login_detail_failed` | `username`, `ip_address`, `reason`, `flow_id`, `auth_provider` |
-| `login_detail_succeeded` | `username`, `ip_address`, `flow_id`, `auth_provider` |
+| `login_detail_failed` | `username`, `ip_address`, `reason`, `flow_id`, `auth_provider`, `endpoint` |
+| `login_detail_succeeded` | `username`, `ip_address`, `flow_id`, `auth_provider`, `endpoint` |
+| `login_detail_request_rejected` | `ip_address`, `endpoint`, `reason` |
 
-Failed attempts are also logged at `WARNING`, successful logins at `INFO`.
+Failed attempts are also logged at `WARNING`, successful logins and rejected
+requests at `INFO` (core already logs rejected requests at `WARNING`).
+
+`login_detail_request_rejected` covers requests that are rejected for invalid
+authentication *outside* the login flow - typically a client with a wrong or
+expired token on `/api/mcp`, `/api/websocket` or `/auth/token`. These carry no
+username. `endpoint` is the route pattern (`/api/mcp`,
+`/api/hassio_ingress/{token}/{path}`), never the literal path or query string,
+which can carry secrets. Login flow attempts always report `/auth/login_flow`.
+A request to `/auth/login_flow/{flow_id}` that core rejects (for example an
+expired flow) is a rejected request, not a failed login.
 
 The `reason` field of `login_detail_failed`:
 
@@ -48,6 +59,7 @@ The `reason` field of `login_detail_failed`:
 | `mfa_too_many_retry` | The password was correct; the flow was aborted after too many wrong 2FA codes. |
 | `mfa_login_expired` | The password was correct; the 2FA step expired. |
 | `mfa_pending` | The password was correct, and the 2FA code has not been submitted (yet). Replaced by `ok` in the history if the same flow completes. |
+| `invalid_request_auth` | A request outside the login flow was rejected for invalid authentication (only on `login_detail_request_rejected` and in the history). |
 
 `invalid_mfa_code` is the one that matters most: someone had the right
 password and was stopped only by 2FA. `mfa_pending` that never turns into a
@@ -59,10 +71,10 @@ Six sensors are created automatically. No YAML, no helpers.
 
 | Entity | Shows |
 |---|---|
-| `sensor.login_seneste_haendelse` | Latest login event as `result · username · ip`. Attributes: time, result, user, IP, hostname, auth provider. |
-| `sensor.login_ok_24t` | Number of successful logins in the last 24 hours, with per-IP and per-username counts. |
-| `sensor.login_mislykkede_24t` | Number of failed login attempts in the last 24 hours, with per-IP and per-username counts. |
-| `sensor.login_ip_adresser_24t` | Number of unique IP addresses that tried to log in in the last 24 hours, with hostname, counts and usernames per IP. |
+| `sensor.login_seneste_haendelse` | Latest login event as `result · username · ip` (the endpoint instead of the username for a rejected request). Attributes: time, result, user, IP, hostname, auth provider, endpoint, count. |
+| `sensor.login_ok_24t` | Number of successful logins in the last 24 hours, with per-IP, per-username and per-endpoint counts. |
+| `sensor.login_mislykkede_24t` | Number of failed login attempts and rejected requests in the last 24 hours, with per-IP, per-username and per-endpoint (`endpoints`) counts. |
+| `sensor.login_ip_adresser_24t` | Number of unique IP addresses that tried to log in or were rejected in the last 24 hours, with hostname, counts, usernames and endpoints per IP. |
 | `sensor.login_historik` | Number of stored events (up to 50); the latest 25 are in the attributes. |
 | `sensor.login_aktive_sessioner` | Active refresh tokens per user, with the IP address and time they were last used. System tokens are not counted. |
 
@@ -71,6 +83,11 @@ The entity names, attribute keys and units are in Danish - see
 
 Each history entry gets a hostname from a reverse DNS lookup. The lookup runs
 in a background task, so a slow or missing PTR record never delays a login.
+
+Repeated rejections from the same IP address on the same endpoint within 10
+minutes are folded into one history entry with a `count`, so a client retrying
+with a stale token cannot push real login attempts out of the history. The
+24-hour counters count every attempt.
 
 The sensors only write a new state when the content actually changes, so no
 `recorder` exclusion is needed.
