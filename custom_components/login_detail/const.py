@@ -88,6 +88,16 @@ MAX_ENTRIES = 5000
 MIN_DAYS = 1
 MAX_DAYS = 365
 
+# Store the username of a failed login even when no user has it (0.9.0), to
+# see what a brute force attempt tries. Off by default: the field is free
+# text, and a password typed into it would be stored in plain text.
+CONF_STORE_UNKNOWN_USERNAMES = "store_unknown_usernames"
+DEFAULT_STORE_UNKNOWN_USERNAMES = False
+
+# An unknown username is typed by whoever is at the login form. It is cut, so
+# a stranger cannot fill the log and the storage file.
+UNKNOWN_USERNAME_MAX_LENGTH = 64
+
 # How often entries older than the age limit are removed, so they disappear
 # even when nothing new is recorded.
 PRUNE_INTERVAL = timedelta(hours=1)

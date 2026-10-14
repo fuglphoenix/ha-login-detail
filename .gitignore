@@ -7,8 +7,7 @@ venv/
 .ruff_cache/
 
 # Acceptance test artefacts
-report.json
-report2.json
+report*.json
 home-assistant.log*
 .storage/
 .HA_VERSION

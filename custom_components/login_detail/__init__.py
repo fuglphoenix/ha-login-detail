@@ -34,6 +34,12 @@ of a failed attempt is only kept if it belongs to an existing user: people
 type their password into the username field, and it must not end up in the
 log, the events or the storage file.
 
+The option `store_unknown_usernames` (0.9.0, off by default) lifts that for
+the owner who wants to see what a brute force attempt tries: the username is
+then kept as typed - cut to 64 characters, control characters replaced - and
+the event and the entry carry `known_user: false`. With the option off,
+nothing changes.
+
 Sign-in log (0.7.0)
 -------------------
 The history is also offered as a sign-in log, in the shape proposed for core
@@ -47,8 +53,8 @@ and is bounded by count and by age (options `max_entries` and `max_days`).
 Setup
 -----
 The integration is set up from the UI: Settings -> Devices & services ->
-Add integration -> Login Detail. The options set the retention of the log and
-whether the side panel is shown.
+Add integration -> Login Detail. The options set the retention of the log,
+whether the side panel is shown, and whether unknown usernames are kept.
 
 A `login_detail:` line in configuration.yaml is no longer needed. If it is
 still there, `async_setup` imports it once into a config entry
@@ -111,9 +117,11 @@ from .const import (
     CONF_MAX_DAYS,
     CONF_MAX_ENTRIES,
     CONF_SHOW_PANEL,
+    CONF_STORE_UNKNOWN_USERNAMES,
     DEFAULT_MAX_DAYS,
     DEFAULT_MAX_ENTRIES,
     DEFAULT_SHOW_PANEL,
+    DEFAULT_STORE_UNKNOWN_USERNAMES,
     DOMAIN,
     ENDPOINT_LOGIN_FLOW,
     EVENT_LOGIN_FAILED,
@@ -130,6 +138,7 @@ from .const import (
     RESULT_OK,
     RESULT_REQUEST_REJECTED,
     SIGNAL_UPDATED,
+    UNKNOWN_USERNAME_MAX_LENGTH,
     USER_AGENT_MAX_LENGTH,
 )
 from .rejection import ATTRIBUTION_FIELDS, classify, websocket_token
@@ -163,6 +172,7 @@ class LoginDetailData:
         hass: HomeAssistant,
         max_entries: int = DEFAULT_MAX_ENTRIES,
         max_days: int = DEFAULT_MAX_DAYS,
+        store_unknown_usernames: bool = DEFAULT_STORE_UNKNOWN_USERNAMES,
     ) -> None:
         self.hass = hass
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
@@ -170,6 +180,7 @@ class LoginDetailData:
         self._host_cache: dict[str, str | None] = {}
         self.max_entries = max_entries
         self.max_days = max_days
+        self.store_unknown_usernames = store_unknown_usernames
 
     async def async_load(self) -> None:
         """Read the history from disk. An unreadable file must not break startup."""
@@ -335,8 +346,15 @@ def _report(
     ip_address: Any,
     flow: Any,
     flow_id: str,
+    *,
+    known_user: bool = True,
 ) -> None:
-    """Log, fire and store one login event. Must never raise."""
+    """Log, fire and store one login event. Must never raise.
+
+    `known_user=False` marks a username no user has, stored only because the
+    `store_unknown_usernames` option is on. Only then is the key added, so
+    with the option off every event and entry looks exactly as before.
+    """
     data = {
         "username": username,
         "user_id": user_id,
@@ -347,6 +365,8 @@ def _report(
         "endpoint": ENDPOINT_LOGIN_FLOW,
         "user_agent": _user_agent_of(current_request.get()),
     }
+    if not known_user:
+        data["known_user"] = False
 
     _log_line(result, data)
     if result == RESULT_OK:
@@ -360,19 +380,20 @@ def _report(
     store = hass.data.get(DOMAIN)
     if not isinstance(store, LoginDetailData):
         return
-    store.async_record(
-        {
-            "timestamp": dt_util.utcnow().isoformat(),
-            "result": result,
-            "username": data["username"],
-            "user_id": data["user_id"],
-            "ip_address": data["ip_address"],
-            "auth_provider": data["auth_provider"],
-            "flow_id": flow_id,
-            "endpoint": ENDPOINT_LOGIN_FLOW,
-            "user_agent": data["user_agent"],
-        }
-    )
+    entry = {
+        "timestamp": dt_util.utcnow().isoformat(),
+        "result": result,
+        "username": data["username"],
+        "user_id": data["user_id"],
+        "ip_address": data["ip_address"],
+        "auth_provider": data["auth_provider"],
+        "flow_id": flow_id,
+        "endpoint": ENDPOINT_LOGIN_FLOW,
+        "user_agent": data["user_agent"],
+    }
+    if not known_user:
+        entry["known_user"] = False
+    store.async_record(entry)
 
 
 def _log_line(result: str, data: dict[str, Any]) -> None:
@@ -382,20 +403,24 @@ def _log_line(result: str, data: dict[str, Any]) -> None:
     waiting for 2FA, a rejected request (which core has already logged at
     WARNING with the full URL) - is INFO. The client fields are only set for
     a rejected request whose token has been proven to be the client's.
+
+    A username no user has is free text, so it is quoted with %r and followed
+    by `known_user=False`; a line without the flag is unchanged.
     """
     level = (
         logging.INFO
         if result in (RESULT_OK, RESULT_MFA_PENDING, RESULT_REQUEST_REJECTED)
         else logging.WARNING
     )
+    unknown = data.get("known_user") is False
     _LOGGER.log(
         level,
         "Sign-in log: type=%s reason=%s username=%s user_id=%s auth_provider=%s "
         "client_id=%s token_type=%s client_name=%r ip=%s endpoint=%s "
-        "user_agent=%r flow_id=%s",
+        "user_agent=%r flow_id=%s" + (" known_user=False" if unknown else ""),
         log_type_of(result),
         None if result == RESULT_OK else data.get("rejection") or result,
-        data.get("username"),
+        repr(data.get("username")) if unknown else data.get("username"),
         data.get("user_id"),
         data.get("auth_provider"),
         data.get("client_id"),
@@ -547,6 +572,26 @@ async def _async_known_user(
     return known, user_id
 
 
+def _unknown_username(hass: HomeAssistant, username: Any) -> str | None:
+    """The typed username, if the owner has chosen to keep unknown ones.
+
+    None while the `store_unknown_usernames` option is off. Otherwise the
+    username as typed - not normalised, since it belongs to no one - with
+    control characters replaced, so it cannot break a log line, and cut to
+    UNKNOWN_USERNAME_MAX_LENGTH.
+    """
+    store = hass.data.get(DOMAIN)
+    if not isinstance(store, LoginDetailData) or not store.store_unknown_usernames:
+        return None
+    if not isinstance(username, str) or not username:
+        return None
+    cleaned = "".join(
+        char if char.isprintable() else "\ufffd"
+        for char in username[:UNKNOWN_USERNAME_MAX_LENGTH]
+    )
+    return cleaned or None
+
+
 async def _async_user_id_of_result(
     hass: HomeAssistant, flow: Any, flow_result: Any
 ) -> str | None:
@@ -628,9 +673,13 @@ class _CorePatch:
                 if user_input is not None:
                     errors = result.get("errors") or {}
                     if errors.get("base") == "invalid_auth":
-                        username, user_id = await _async_known_user(
-                            hass, self, user_input.get("username")
-                        )
+                        typed = user_input.get("username")
+                        username, user_id = await _async_known_user(hass, self, typed)
+                        known_user = True
+                        if username is None:
+                            unknown = _unknown_username(hass, typed)
+                            if unknown is not None:
+                                username, known_user = unknown, False
                         _report(
                             hass,
                             "invalid_auth",
@@ -639,6 +688,7 @@ class _CorePatch:
                             _ip_of(self),
                             self,
                             self.flow_id,
+                            known_user=known_user,
                         )
             except Exception:  # must never break a login
                 _LOGGER.exception("login_detail: could not report failed login attempt")
@@ -813,6 +863,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass,
         max_entries=entry.options.get(CONF_MAX_ENTRIES, DEFAULT_MAX_ENTRIES),
         max_days=entry.options.get(CONF_MAX_DAYS, DEFAULT_MAX_DAYS),
+        store_unknown_usernames=entry.options.get(
+            CONF_STORE_UNKNOWN_USERNAMES, DEFAULT_STORE_UNKNOWN_USERNAMES
+        ),
     )
     await data.async_load()
     hass.data[DOMAIN] = data

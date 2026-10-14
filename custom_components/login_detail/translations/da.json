@@ -19,7 +19,11 @@
         "data": {
           "max_entries": "Højst antal poster",
           "max_days": "Gem poster i (dage)",
-          "show_panel": "Vis panelet Sign-in log i sidepanelet (kun administratorer)"
+          "show_panel": "Vis panelet Sign-in log i sidepanelet (kun administratorer)",
+          "store_unknown_usernames": "Gem også brugernavne, der ikke findes (fejlede logins)"
+        },
+        "data_description": {
+          "store_unknown_usernames": "Viser, hvad et brute force-forsøg prøver. ADVARSEL: hvis nogen taster sin adgangskode i brugernavnsfeltet, gemmes den i klartekst i hændelserne, loggen, login-loggen, sensorhistorikken, recorder-databasen og backups. Slået fra som standard. Brugernavne afkortes til 64 tegn."
         }
       }
     }

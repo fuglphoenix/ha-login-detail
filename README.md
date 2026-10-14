@@ -118,9 +118,26 @@ Non-admin users do not see the panel.
 | Maximum number of entries | 500 | 50-5000 |
 | Keep entries for (days) | 7 | 1-365 |
 | Show the Sign-in log panel | on | |
+| Also store usernames that do not exist | off | |
+
+The options can be changed at any time, also on an existing installation;
+saving reloads the integration, so a change applies without a restart. An
+installation from before 0.9.0 reads the new option as off.
 
 An entry is deleted when either limit is reached. Expired entries are removed
 hourly, also when nothing new is logged.
+
+By default, the username of a failed login is only kept if a user has it.
+Turn on **Also store usernames that do not exist** to see what a brute force
+attempt tries: the name is then kept as typed (cut to 64 characters), and the
+row is marked "no such user" (`known_user: false`, no user ID).
+
+> [!CAUTION]
+> With this option on, **a password typed into the username field is stored
+> in plain text** - in the events, the Home Assistant log, the Sign-in log,
+> the sensor history, the recorder database and every backup that contains
+> them. Turning the option off again does not remove what was stored. Only
+> turn it on if you accept that, and tell the people who log in.
 
 ## Automation example
 
@@ -154,7 +171,9 @@ alice from 203.0.113.7 (invalid_mfa_code)
 This integration stores usernames, user IDs, IP addresses and user agents in
 plain text - in the events, the log, `.storage/login_detail_history`, the
 sensor attributes and therefore the recorder database and backups - and looks
-up every IP address with reverse DNS. If you run Home Assistant for other
+up every IP address with reverse DNS. With the option **Also store usernames
+that do not exist**, that includes whatever was typed into the username
+field, possibly a password. If you run Home Assistant for other
 people, tell them. Details in [Privacy](docs/privacy.md).
 
 ## Removal
