@@ -23,15 +23,18 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "login_detail"
 REPO_URL = "https://github.com/fuglphoenix/ha-login-detail"
 
-# Danish attribute keys, and the entity IDs that installations from before
-# 0.8.0 keep, for compatibility (see "Entities" and "Known limitations" in
-# README.md). They may appear anywhere; nothing else Danish may.
-COMPAT_TERMS = [
+# The entity IDs that installations from before 0.8.0 keep (see "Entities" in
+# README.md), and the attribute keys before 0.8.0, which the README and the
+# CHANGELOG list next to the new ones. They may appear anywhere; nothing else
+# Danish may.
+LEGACY_ENTITY_IDS = [
     "login_seneste_haendelse",
     "login_mislykkede_24t",
     "login_ip_adresser_24t",
     "login_historik",
     "login_aktive_sessioner",
+]
+LEGACY_ATTRIBUTE_KEYS = [
     "hændelser",
     "sessioner",
     "adresser",
@@ -49,6 +52,7 @@ COMPAT_TERMS = [
     "klient",
     "ukendt",
 ]
+COMPAT_TERMS = LEGACY_ENTITY_IDS + LEGACY_ATTRIBUTE_KEYS
 
 DANISH = re.compile(
     r"[æøåÆØÅ]"
@@ -169,4 +173,17 @@ def test_no_danish_outside_danish_translation() -> None:
             if match := DANISH.search(line):
                 rel = path.relative_to(ROOT)
                 findings.append(f"{rel}:{number}: {match.group(0)!r}: {line.strip()}")
+    assert not findings, "\n".join(findings)
+
+
+def test_no_legacy_attribute_keys_in_code() -> None:
+    """The attribute keys from before 0.8.0 are only named in the docs."""
+    findings = []
+    for path in COMPONENT.rglob("*"):
+        if path.suffix not in {".py", ".js"}:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for key in LEGACY_ATTRIBUTE_KEYS:
+            if re.search(rf"[\"']{re.escape(key)}[\"']", text):
+                findings.append(f"{path.relative_to(ROOT)}: {key!r}")
     assert not findings, "\n".join(findings)
