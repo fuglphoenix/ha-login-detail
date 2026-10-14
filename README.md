@@ -180,6 +180,13 @@ usernames and IP addresses gone.
 - [Contributing and issues](docs/contributing.md)
 - [Changelog](CHANGELOG.md)
 
+## Maintainer
+
+Owned and maintained by [@fuglphoenix](https://github.com/fuglphoenix).
+This is a personal project, provided as is under the MIT license; there is
+no support agreement. Report bugs and questions in
+[issues](https://github.com/fuglphoenix/ha-login-detail/issues).
+
 ## License
 
 [MIT](LICENSE)
