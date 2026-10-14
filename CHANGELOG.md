@@ -16,10 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `addresses`, `events` and `sessions`. The unique IDs are unchanged, so an
   existing installation keeps its entity IDs (for example
   `sensor.login_mislykkede_24t`); a new installation gets English ones (for
-  example `sensor.login_failed_24h`). See "Entities" in README.md.
+  example `sensor.login_failed_24h`). See docs/upgrading.md.
 - The unit change on the IP address sensor makes Home Assistant report a unit
   change for its long-term statistics on an existing installation; resolve it
-  under Developer tools → Statistics. See "Known limitations" in README.md.
+  under Developer tools → Statistics. See docs/upgrading.md.
 - **Breaking: English attribute keys.** Templates, automations and dashboard
   cards that read a sensor attribute must use the new keys. Keys not listed
   (`ip`, `endpoint`, `endpoints`, `count`, `ok`, `type`) are unchanged; so
@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 | | `klient` | `client` |
 | All tallies and `addresses` | key `ukendt` (no IP or username) | key `unknown` |
 
+### Documentation
+- Documentation restructured: the README covers evaluating, installing and
+  getting started, with a screenshot of the Sign-in log panel; the reference
+  material moved to `docs/`.
+
 ## [0.7.1] - 2026-10-14
 
 ### Added
@@ -56,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reason: `no_credentials`, `expired_token`, `user_not_allowed`,
   `unknown_or_revoked_token`, `malformed_credentials`, `invalid_signed_path`,
   `not_admin`, `permission_denied` or `invalid_auth_request`. See
-  "Rejected requests" in README.md.
+  "Rejected requests" in docs/events.md.
 - **Who sent it, when that is proven.** For a rejected token, the signature
   is checked against the key of the refresh token it names (everything core
   checks except the expiry). Only if it matches, the event, the history and
