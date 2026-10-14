@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The Sign-in log panel no longer logs `Failed to execute 'define' on
+  'CustomElementRegistry'` when a browser tab that was open during an
+  upgrade loads the new version. The tab keeps the old panel until it is
+  reloaded.
+
 ## [0.7.1] - 2026-10-14
 
 ### Added
