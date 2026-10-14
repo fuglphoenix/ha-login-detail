@@ -1,0 +1,11 @@
+{
+  "domain": "login_detail_probe",
+  "name": "Login Detail acceptance test probe",
+  "after_dependencies": ["login_detail"],
+  "codeowners": [],
+  "dependencies": [],
+  "documentation": "https://github.com/fuglphoenix/ha-login-detail/tree/main/tests",
+  "iot_class": "local_push",
+  "requirements": [],
+  "version": "1.0.0"
+}

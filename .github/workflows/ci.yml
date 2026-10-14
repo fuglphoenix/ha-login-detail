@@ -1,0 +1,24 @@
+name: CI
+
+# Static checks only. The acceptance test needs a running Home Assistant
+# container and is run by hand, see tests/README.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pytest ruff
+      - run: ruff check custom_components tools tests
+      - run: ruff format --check custom_components tools tests
+      - run: pytest -v
+      - run: python tools/check.py

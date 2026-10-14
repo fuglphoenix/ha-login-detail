@@ -1,0 +1,18 @@
+homeassistant:
+  name: login_detail acceptance test
+  latitude: 0
+  longitude: 0
+  elevation: 0
+  unit_system: metric
+  time_zone: UTC
+  auth_mfa_modules:
+    - type: totp
+
+logger:
+  default: warning
+  logs:
+    custom_components.login_detail: info
+    custom_components.login_detail_probe: info
+
+login_detail:
+login_detail_probe:

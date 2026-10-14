@@ -1,0 +1,14 @@
+{
+  "title": "Login Detail",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Login Detail",
+        "description": "Login Detail registrerer hvem der forsøger at logge ind, hvornår, og fra hvilken IP-adresse. Der er ikke noget at udfylde — bekræft for at tilføje den."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Login Detail er allerede sat op."
+    }
+  }
+}

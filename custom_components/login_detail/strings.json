@@ -1,0 +1,14 @@
+{
+  "title": "Login Detail",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Login Detail",
+        "description": "Login Detail records who tries to log in, when, and from which IP address. There is nothing to configure — confirm to add it."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Login Detail is already set up."
+    }
+  }
+}

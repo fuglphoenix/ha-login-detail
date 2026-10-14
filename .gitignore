@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Acceptance test artefacts
+report.json
+report2.json
+home-assistant.log*
+.storage/
+.HA_VERSION
+
+# Never in the repository
+*.key
+*.pem
+secrets.yaml
+.env
