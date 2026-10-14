@@ -31,7 +31,17 @@ REPORT = "report2.json"
 EVENT_FAILED = "login_detail_failed"
 EVENT_OK = "login_detail_succeeded"
 
-EXPECTED_ENTITIES = {
+# Run B continues on run A's registry: either all new (0.8.0 and later) or all
+# legacy entity IDs, depending on whether run A was seeded.
+NEW_ENTITIES = {
+    "sensor.login_latest_event",
+    "sensor.login_ok_24h",
+    "sensor.login_failed_24h",
+    "sensor.login_ip_addresses_24h",
+    "sensor.login_history",
+    "sensor.login_active_sessions",
+}
+LEGACY_ENTITIES = {
     "sensor.login_seneste_haendelse",
     "sensor.login_ok_24t",
     "sensor.login_mislykkede_24t",
@@ -102,17 +112,19 @@ async def _checks(hass: HomeAssistant, check: Any) -> None:
         entries[0].source,
     )
     rows = er.async_entries_for_config_entry(er.async_get(hass), entries[0].entry_id)
+    found = {row.entity_id for row in rows}
+    expected = LEGACY_ENTITIES if found == LEGACY_ENTITIES else NEW_ENTITIES
     check(
         "A4. the six entity IDs are unchanged",
-        {row.entity_id for row in rows} == EXPECTED_ENTITIES,
+        found == expected,
         sorted(row.entity_id for row in rows),
     )
     check(
         "A5. all six have a state",
-        all(hass.states.get(e) is not None for e in EXPECTED_ENTITIES),
+        all(hass.states.get(e) is not None for e in expected),
         {
             e: (hass.states.get(e).state if hass.states.get(e) else None)
-            for e in EXPECTED_ENTITIES
+            for e in expected
         },
     )
     patched = {

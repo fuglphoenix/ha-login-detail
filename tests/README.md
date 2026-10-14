@@ -58,7 +58,9 @@ cp tests/configuration.yaml /usr/src/login_detail_test/configuration.yaml
 
 # 3. optional: seed .storage/core.entity_registry with your instance's
 #    login_detail rows (config_entry_id: null) to exercise the adoption of
-#    entities created by a YAML-based setup.
+#    entities created by a YAML-based setup. Rows from before 0.8.0 carry
+#    the Danish entity IDs; the probes then check that those are kept.
+#    Unseeded, they check the English IDs a new installation gets.
 
 # 4. run
 cd /usr/src/login_detail_test && env -u SUPERVISOR -u SUPERVISOR_TOKEN \

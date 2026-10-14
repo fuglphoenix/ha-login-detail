@@ -120,16 +120,29 @@ reason.
 
 Six sensors are created automatically. No YAML, no helpers.
 
-| Entity | Shows |
-|---|---|
-| `sensor.login_seneste_haendelse` | Latest login event as `result · username · ip` (the endpoint instead of the username for a rejected request). Attributes: time, result, user, IP, hostname, auth provider, endpoint, count. |
-| `sensor.login_ok_24t` | Number of successful logins in the last 24 hours, with per-IP, per-username and per-endpoint counts. |
-| `sensor.login_mislykkede_24t` | Number of failed login attempts and rejected requests in the last 24 hours, with per-IP, per-username and per-endpoint (`endpoints`) counts. |
-| `sensor.login_ip_adresser_24t` | Number of unique IP addresses that tried to log in or were rejected in the last 24 hours, with hostname, counts, usernames and endpoints per IP. |
-| `sensor.login_historik` | Number of stored events (up to the `max_entries` option, default 500); the latest 25 are in the attributes. |
-| `sensor.login_aktive_sessioner` | Active refresh tokens per user, with the IP address and time they were last used. System tokens are not counted. |
+| Entity ID (new installation) | Entity ID (installed before 0.8.0) | Shows |
+|---|---|---|
+| `sensor.login_latest_event` | `sensor.login_seneste_haendelse` | Latest login event as `result · username · ip` (the endpoint instead of the username for a rejected request). Attributes: time, result, user, IP, hostname, auth provider, endpoint, count. |
+| `sensor.login_ok_24h` | `sensor.login_ok_24t` | Number of successful logins in the last 24 hours, with per-IP, per-username and per-endpoint counts. |
+| `sensor.login_failed_24h` | `sensor.login_mislykkede_24t` | Number of failed login attempts and rejected requests in the last 24 hours, with per-IP, per-username and per-endpoint (`endpoints`) counts. |
+| `sensor.login_ip_addresses_24h` | `sensor.login_ip_adresser_24t` | Number of unique IP addresses that tried to log in or were rejected in the last 24 hours, with hostname, counts, usernames and endpoints per IP. |
+| `sensor.login_history` | `sensor.login_historik` | Number of stored events (up to the `max_entries` option, default 500); the latest 25 are in the attributes. |
+| `sensor.login_active_sessions` | `sensor.login_aktive_sessioner` | Active refresh tokens per user, with the IP address and time they were last used. System tokens are not counted. |
 
-The entity names, attribute keys and units are in Danish - see
+**Which entity IDs you get.** Since 0.8.0 the entity names (for example
+"Login failed 24h") and units are English. Home Assistant derives the entity
+ID from the name only the first time it sees an entity; after that the entity
+registry finds the entity by its unique ID, which has not changed. So:
+
+- **A new installation** gets the English entity IDs in the first column.
+- **An existing installation keeps its entity IDs** from the second column -
+  dashboards, automations and templates keep working. Only the displayed name
+  and unit change. If you have renamed an entity yourself, your name is kept.
+- To switch an existing installation to the English IDs, rename them under
+  **Settings → Entities** (entity ID field), and update whatever refers to
+  them.
+
+The attribute keys are still in Danish - see
 [Known limitations](#known-limitations).
 
 Each history entry gets a hostname from a reverse DNS lookup. The lookup runs
@@ -286,7 +299,7 @@ This is the one maintenance task the integration needs. Make sure
 |---|---|---|
 | `login_detail active - logins fire the events ...` is **missing** from the startup log | The monkeypatch could not be applied - core has moved the login code. | Check the log for a `login_detail` error. Open an issue with your Home Assistant version. |
 | The line is there, but a deliberately wrong login with a made-up username (e.g. `does-not-exist`) gives **no** `Failed login: user=does-not-exist ...` warning | The patch is applied to methods core no longer calls. | Open an issue with your Home Assistant version. |
-| The warning appears with the made-up username, and a real login raises `sensor.login_ok_24t` by **exactly 1** | It works. | Nothing. |
+| The warning appears with the made-up username, and a real login raises `sensor.login_ok_24h` (`sensor.login_ok_24t` on an installation from before 0.8.0) by **exactly 1** | It works. | Nothing. |
 
 For a thorough check, run the acceptance test in [`tests/`](tests/README.md).
 It exercises the whole login path, including 2FA, against a real Home
@@ -351,10 +364,16 @@ usernames and IP addresses gone.
 
   `info` rather than `warning`, because it also gives you the startup line
   the post-upgrade check relies on.
-- **Entity names, attribute keys and units are in Danish** (for example
-  `sensor.login_mislykkede_24t`, attribute `brugernavne`, unit `adresser`).
-  They are kept for compatibility with existing installations; changing them
-  would break existing dashboards, templates and long-term statistics.
+- **Attribute keys are in Danish** (for example `brugernavne`, `adresser`,
+  `hændelser`, `sessioner`). They are kept for compatibility with existing
+  installations; changing them would break existing dashboards and templates.
+- **Installations from before 0.8.0 keep their Danish entity IDs** (for
+  example `sensor.login_mislykkede_24t`), see [Entities](#entities).
+- **The unit of the IP address sensor changed in 0.8.0** from `adresser` to
+  `addresses`. It has long-term statistics, so on an existing installation
+  Home Assistant reports that the unit changed and stops compiling its
+  statistics until you resolve it under **Developer tools → Statistics**. The other sensors are not affected (`logins` is unchanged, and the
+  history and sessions sensors have no statistics).
 - **The config flow imports `probatio`**, the schema library shipped with Home
   Assistant 2026.10. If your Home Assistant version ships it under another
   name, the import fails.

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-14
+
+### Changed
+- **English sensor names and units.** The six sensors are now called
+  "Login latest event", "Login ok 24h", "Login failed 24h", "Login IP
+  addresses 24h", "Login history" and "Login active sessions", with the units
+  `addresses`, `events` and `sessions`. The unique IDs are unchanged, so an
+  existing installation keeps its entity IDs (for example
+  `sensor.login_mislykkede_24t`); a new installation gets English ones (for
+  example `sensor.login_failed_24h`). See "Entities" in README.md.
+- The unit change on the IP address sensor makes Home Assistant report a unit
+  change for its long-term statistics on an existing installation; resolve it
+  under Developer tools → Statistics. See "Known limitations" in README.md.
+- Attribute keys are unchanged (still Danish).
+
 ## [0.7.1] - 2026-10-14
 
 ### Added

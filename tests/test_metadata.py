@@ -23,15 +23,10 @@ ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "login_detail"
 REPO_URL = "https://github.com/fuglphoenix/ha-login-detail"
 
-# Danish entity names, attribute keys, units and entity IDs that are kept for
-# compatibility with existing installations (see "Known limitations" in
+# Danish attribute keys, and the entity IDs that installations from before
+# 0.8.0 keep, for compatibility (see "Entities" and "Known limitations" in
 # README.md). They may appear anywhere; nothing else Danish may.
 COMPAT_TERMS = [
-    "Login seneste hændelse",
-    "Login mislykkede 24t",
-    "Login IP-adresser 24t",
-    "Login historik",
-    "Login aktive sessioner",
     "login_seneste_haendelse",
     "login_mislykkede_24t",
     "login_ip_adresser_24t",

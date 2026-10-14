@@ -1,22 +1,25 @@
 """Sensors for login_detail - who logs in, when, and from which IP address.
 
-The entities are deliberately few and flat:
+The entities are deliberately few and flat. Entity IDs on a new installation
+(an existing installation keeps the Danish IDs it already has, see below):
 
-  sensor.login_seneste_haendelse   latest login (ok or failed)
-  sensor.login_ok_24t              completed logins in the last 24 hours
-  sensor.login_mislykkede_24t      failed login attempts and rejected requests
+  sensor.login_latest_event        latest login (ok or failed)
+  sensor.login_ok_24h              completed logins in the last 24 hours
+  sensor.login_failed_24h          failed login attempts and rejected requests
                                    in the last 24 hours, per endpoint
-  sensor.login_ip_adresser_24t     unique IP addresses in the last 24 hours
-  sensor.login_historik            the most recent stored events (attribute)
-  sensor.login_aktive_sessioner    active tokens with the last used IP address
+  sensor.login_ip_addresses_24h    unique IP addresses in the last 24 hours
+  sensor.login_history             the most recent stored events (attribute)
+  sensor.login_active_sessions     active tokens with the last used IP address
 
 No entity exposes passwords, tokens or keys. The sessions sensor only reads
 metadata (user, IP address, time, client name) through hass.auth - never
 .storage/auth directly.
 
-The entity names, attribute keys and units below are Danish. They are kept
-unchanged on purpose: existing installations have entity IDs, dashboards and
-templates that depend on them. See "Known limitations" in README.md.
+The entity names and units are English. The unique IDs must never change: the
+entity registry finds an existing entity by its unique ID and keeps its entity
+ID, so installations from before 0.8.0 keep sensor.login_mislykkede_24t and
+the others. The attribute keys are still Danish, kept unchanged on purpose:
+dashboards and templates depend on them. See "Known limitations" in README.md.
 """
 
 from __future__ import annotations
@@ -180,7 +183,7 @@ class LoginDetailSensor(SensorEntity):
 class LoginLatestSensor(LoginDetailSensor):
     """Latest login event, in readable form."""
 
-    _attr_name = "Login seneste hændelse"
+    _attr_name = "Login latest event"
     _attr_unique_id = "login_detail_latest"
     _attr_icon = "mdi:login-variant"
 
@@ -211,11 +214,11 @@ class LoginCountSensor(LoginDetailSensor):
         super().__init__(data)
         self._ok = ok
         if ok:
-            self._attr_name = "Login ok 24t"
+            self._attr_name = "Login ok 24h"
             self._attr_unique_id = "login_detail_ok_24h"
             self._attr_icon = "mdi:account-check"
         else:
-            self._attr_name = "Login mislykkede 24t"
+            self._attr_name = "Login failed 24h"
             self._attr_unique_id = "login_detail_failed_24h"
             self._attr_icon = "mdi:account-alert"
 
@@ -247,11 +250,11 @@ class LoginCountSensor(LoginDetailSensor):
 class LoginUniqueIpSensor(LoginDetailSensor):
     """Unique IP addresses that tried to log in within the window."""
 
-    _attr_name = "Login IP-adresser 24t"
+    _attr_name = "Login IP addresses 24h"
     _attr_unique_id = "login_detail_unique_ip_24h"
     _attr_icon = "mdi:ip-network"
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_native_unit_of_measurement = "adresser"
+    _attr_native_unit_of_measurement = "addresses"
 
     def _per_ip(self) -> dict[str, dict[str, Any]]:
         per_ip: dict[str, dict[str, Any]] = {}
@@ -292,10 +295,10 @@ class LoginUniqueIpSensor(LoginDetailSensor):
 class LoginHistorySensor(LoginDetailSensor):
     """The most recently stored login events as an attribute."""
 
-    _attr_name = "Login historik"
+    _attr_name = "Login history"
     _attr_unique_id = "login_detail_history"
     _attr_icon = "mdi:format-list-bulleted"
-    _attr_native_unit_of_measurement = "hændelser"
+    _attr_native_unit_of_measurement = "events"
 
     @property
     def native_value(self) -> int:
@@ -321,10 +324,10 @@ class LoginSessionsSensor(SensorEntity):
 
     _attr_should_poll = False
     _attr_has_entity_name = False
-    _attr_name = "Login aktive sessioner"
+    _attr_name = "Login active sessions"
     _attr_unique_id = "login_detail_sessions"
     _attr_icon = "mdi:account-key"
-    _attr_native_unit_of_measurement = "sessioner"
+    _attr_native_unit_of_measurement = "sessions"
 
     def __init__(self) -> None:
         self._sessions: list[dict[str, Any]] = []
