@@ -47,6 +47,8 @@ expired token on `/api/mcp`, `/api/websocket` or `/auth/token`. These carry no
 username. `endpoint` is the route pattern (`/api/mcp`,
 `/api/hassio_ingress/{token}/{path}`), never the literal path or query string,
 which can carry secrets. Login flow attempts always report `/auth/login_flow`.
+Rejections on ordinary views such as `/api/mcp` require IP banning to be
+enabled - see [Known limitations](#known-limitations).
 A request to `/auth/login_flow/{flow_id}` that core rejects (for example an
 expired flow) is a rejected request, not a failed login.
 
@@ -210,6 +212,13 @@ usernames and IP addresses gone.
   `trusted_proxies`. Behind a reverse proxy that is not trusted, or behind
   source NAT (including hairpin NAT for local clients), several clients can
   show up with the same address.
+- **Rejected requests on ordinary views need IP banning enabled.** A 401 on
+  `/api/mcp`, `/api/states` and other REST views only reaches core's
+  `process_wrong_login` through the IP ban middleware, which Home Assistant
+  only installs when `ip_ban_enabled` is true. With IP banning disabled, core
+  does not log these requests and `login_detail_request_rejected` is not fired
+  for them. The login flow, `/auth/token` and `/api/websocket` call core
+  directly and are reported either way.
 - **A strict `logger.default` silences the log lines.** With for example
   `logger: default: error`, nothing is written to the log - the events are
   still fired. To keep the log lines, add:
