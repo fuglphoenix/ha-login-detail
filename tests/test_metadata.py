@@ -15,7 +15,9 @@ import json
 from pathlib import Path
 import py_compile
 import re
+import struct
 import subprocess
+import sys
 
 import pytest
 
@@ -121,6 +123,20 @@ def test_hacs_json() -> None:
     assert hacs["name"] == "Login Detail"
     assert hacs["render_readme"] is True
     assert re.fullmatch(r"\d{4}\.\d{1,2}\.\d+", hacs["homeassistant"])
+
+
+@pytest.mark.parametrize(("name", "size"), [("icon.png", 256), ("icon@2x.png", 512)])
+def test_brand_icon(name: str, size: int) -> None:
+    """The icon Home Assistant serves from brand/ is a square RGBA PNG."""
+    data = (COMPONENT / "brand" / name).read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    width, height, depth, color = struct.unpack(">IIBB", data[16:26])
+    assert (width, height, depth, color) == (size, size, 8, 6)
+
+
+def test_brand_files_are_current() -> None:
+    """The SVG and PNG files match the shapes in tools/brand.py."""
+    subprocess.run([sys.executable, "tools/brand.py", "--check"], cwd=ROOT, check=True)
 
 
 def test_every_module_compiles() -> None:

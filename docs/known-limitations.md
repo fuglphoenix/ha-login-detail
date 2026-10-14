@@ -59,3 +59,10 @@
 - **The config flow imports `probatio`**, the schema library shipped with Home
   Assistant 2026.10. If your Home Assistant version ships it under another
   name, the import fails.
+- **HACS shows a generic icon.** The icon ships in
+  `custom_components/login_detail/brand/`, which Home Assistant (2026.3 and
+  newer) shows under **Settings → Devices & services**. The HACS dashboard does
+  not read that folder yet ([hacs/integration#5171]); the integration is not in
+  `home-assistant/brands`.
+
+[hacs/integration#5171]: https://github.com/hacs/integration/issues/5171

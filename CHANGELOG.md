@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-14
+
+### Added
+- **An icon.** A shield with a person, shipped in
+  `custom_components/login_detail/brand/` (`icon.png`, `icon@2x.png`), so
+  **Settings → Devices & services** no longer shows a generic placeholder
+  (Home Assistant 2026.3 and newer). Drawn by `tools/brand.py`; the source is
+  `assets/icon.svg`. The HACS dashboard does not show it yet, see
+  docs/known-limitations.md.
+
 ## [0.8.0] - 2026-10-14
 
 ### Changed
