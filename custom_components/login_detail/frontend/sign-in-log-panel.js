@@ -277,6 +277,12 @@ class LoginDetailSignInLog extends HTMLElement {
       if (key === "client" && entry.token_type) {
         cell.title = `${shown} (${TOKEN_TYPES[entry.token_type] || entry.token_type})`;
       }
+      // Stored only with the option store_unknown_usernames: typed by whoever
+      // was at the login form, and no user has it.
+      if (key === "username" && entry.known_user === false) {
+        cell.append(el("span", { class: "count", text: "no such user" }));
+        cell.title = `${shown} (no such user)`;
+      }
     }
     return cell;
   }

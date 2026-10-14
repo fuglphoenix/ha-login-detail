@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-14
+
+### Added
+- **Option: store usernames that do not exist** (`store_unknown_usernames`,
+  off by default). When it is on, a failed login with a username no user has
+  keeps the username as typed - in the `login_detail_failed` event, the log
+  line, the sensors and the Sign-in log - so you can see what a brute force
+  attempt tries. Such an entry carries `known_user: false` and has no
+  `user_id`; the panel marks it "no such user". The name is cut to 64
+  characters and control characters are replaced, so a stranger cannot fill
+  the log or break a log line. **Warning:** a password typed into the
+  username field is then stored in plain text, in the log, the recorder
+  database and backups. See docs/privacy.md.
+- With the option off, nothing changes: unknown usernames are still `null`,
+  and no event, entry or log line has a `known_user` key.
+
 ### Fixed
 - The Sign-in log panel no longer logs `Failed to execute 'define' on
   'CustomElementRegistry'` when a browser tab that was open during an

@@ -8,6 +8,11 @@ proposed for core in home-assistant/architecture#1346:
     ts, type, reason, username, user_id, auth_provider, ip, hostname,
     endpoint, user_agent, flow_id, count,
     client_id, client_name, token_type   (rejected requests, 0.7.1)
+    known_user                           (only when false, 0.9.0)
+
+`known_user: false` marks a failed login whose username no user has. It is
+only stored while the `store_unknown_usernames` option is on; every other
+entry has no such key.
 
 For a rejected request `reason` says why (no_credentials, expired_token,
 not_admin, ... - see rejection.py), and username, user_id, client_id,
@@ -73,7 +78,7 @@ def as_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
     reason = None if result == RESULT_OK else result
     if result == RESULT_REQUEST_REJECTED:
         reason = entry.get("reason") or result
-    return {
+    log_entry = {
         "ts": entry.get("timestamp"),
         "type": log_type_of(result),
         "reason": reason,
@@ -90,6 +95,9 @@ def as_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "client_name": entry.get("client_name"),
         "token_type": entry.get("token_type"),
     }
+    if entry.get("known_user") is False:
+        log_entry["known_user"] = False
+    return log_entry
 
 
 @callback

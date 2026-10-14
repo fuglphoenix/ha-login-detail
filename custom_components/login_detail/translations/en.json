@@ -19,7 +19,11 @@
         "data": {
           "max_entries": "Maximum number of entries",
           "max_days": "Keep entries for (days)",
-          "show_panel": "Show the Sign-in log panel in the sidebar (administrators only)"
+          "show_panel": "Show the Sign-in log panel in the sidebar (administrators only)",
+          "store_unknown_usernames": "Also store usernames that do not exist (failed logins)"
+        },
+        "data_description": {
+          "store_unknown_usernames": "Shows what a brute force attempt tries. WARNING: if someone types their password into the username field, it is stored in plain text in the events, the log, the sign-in log, the sensor history, the recorder database and backups. Off by default. Usernames are cut to 64 characters."
         }
       }
     }

@@ -16,6 +16,15 @@ where:
   user, in the form Home Assistant stores it. Anything else - including a
   password typed into the username field - is recorded as `null`. (Before
   0.7.0 it was stored as typed.)
+- **Unless you turn on "Also store usernames that do not exist"** (0.9.0, off
+  by default). Then a username no user has is stored as typed, cut to 64
+  characters, with `known_user: false`. If someone types their password into
+  the username field, the password is stored in plain text in the events,
+  the log, `.storage/login_detail_history`, the sensor attributes, the
+  recorder database and backups, and is carried by any notification an
+  automation sends for the event. Turning the option off stops new ones;
+  what is already stored stays until retention removes it from the storage
+  file - the log, the recorder and backups follow their own retention.
 - The Sign-in log panel and its websocket command are for administrators
   only. Screenshots of the panel contain all of the above; anonymise them
   before sharing.
