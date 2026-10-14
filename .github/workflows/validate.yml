@@ -22,6 +22,7 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
-          # Not in home-assistant/brands and no brand assets in the repository
-          # yet; both are only needed for the HACS default list.
+          # Not in home-assistant/brands. The icon ships in the integration's
+          # brand/ folder, which this check does not look at yet
+          # (hacs/integration#5171).
           ignore: brands
