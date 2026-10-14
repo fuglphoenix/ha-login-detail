@@ -10,5 +10,18 @@
     "abort": {
       "single_instance_allowed": "Login Detail er allerede sat op."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Login-log",
+        "description": "Login-loggen indeholder persondata (brugernavn, IP-adresse, user agent). Poster slettes, når en af grænserne nås.",
+        "data": {
+          "max_entries": "Højst antal poster",
+          "max_days": "Gem poster i (dage)",
+          "show_panel": "Vis panelet Sign-in log i sidepanelet (kun administratorer)"
+        }
+      }
+    }
   }
 }

@@ -32,9 +32,10 @@ it. Real bootstrap, real config entry machinery, real entity registry, real
 |---|---|
 | `login_detail_probe` | Import from YAML, adoption of existing entities, login with and without 2FA, reload, removal, UI setup, single-instance guard. |
 | `login_detail_probe2` | The state after migration: a config entry **without** `login_detail:` in `configuration.yaml`. |
+| `login_detail_probe3` | The sign-in log (0.7.0) over real HTTP and websocket: `user_id`, `user_agent`, the username guard, one log line per event, the websocket command and its filters, **refusal for non-admin users**, the panel, retention and the options. |
 
-The probes write their result to `report.json` / `report2.json` in the config
-directory.
+The probes write their result to `report.json` / `report2.json` /
+`report3.json` in the config directory.
 
 ### How to run it
 
@@ -44,6 +45,7 @@ mkdir -p /usr/src/login_detail_test/custom_components /usr/src/login_detail_test
 cp -a custom_components/login_detail /usr/src/login_detail_test/custom_components/
 cp -a tests/custom_components/login_detail_probe  /usr/src/login_detail_test/custom_components/
 cp -a tests/custom_components/login_detail_probe2 /usr/src/login_detail_test/custom_components/
+cp -a tests/custom_components/login_detail_probe3 /usr/src/login_detail_test/custom_components/
 cp tests/configuration.yaml /usr/src/login_detail_test/configuration.yaml
 
 # 2. .storage/http MUST be seeded with a port other than your instance's,
@@ -66,7 +68,13 @@ cat /usr/src/login_detail_test/report.json
 `login_detail:` and `login_detail_probe:` from `configuration.yaml`, and add
 `login_detail_probe2:`.
 
-Expected result for 0.6.0 on Home Assistant 2026.10.1: **A: 35/35, B: 9/9.**
+**Run C in a fresh directory:** the same setup as A, but with only
+`login_detail_probe3:` in `configuration.yaml` (no `login_detail:` line - the
+probe adds the integration from the UI). It needs `http` on port 18123 with
+`ip_ban_enabled: false`, as above.
+
+Expected result for 0.7.0 on Home Assistant 2026.10.1: **A: 35/35, B: 9/9,
+C: 25/25.**
 
 ### Two things to get right
 

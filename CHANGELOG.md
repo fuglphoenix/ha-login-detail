@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-14
+
+### Added
+- **Sign-in log panel**: an admin-only panel in the sidebar showing every
+  recorded event as one row (time, type, reason, username, user ID, login
+  method, IP address, endpoint, user agent, flow ID), with filters for type,
+  user, IP address and time span. A proof of concept for
+  home-assistant/architecture#1346. It can be hidden in the options.
+- Websocket command `login_detail/sign_in_log/list`, admin only, with the
+  optional filters `log_type`, `username`, `user_id`, `ip`, `start_time`,
+  `end_time` and `limit`. The panel uses nothing else.
+- `user_id` on `login_detail_failed` and `login_detail_succeeded` and in the
+  history, whenever the user is known.
+- `user_agent` on all three events and in the history, cut to 256 characters.
+- Options for retention: maximum number of entries (default 500, 50-5000) and
+  maximum age in days (default 7, 1-365). Expired entries are removed hourly.
+
+### Changed
+- **The username of a failed login is only recorded if it belongs to an
+  existing user.** Otherwise `username` is `null` in the event, the log line,
+  the history and the sensors. Before, it was recorded as typed - including a
+  password typed into the username field.
+- One log line per event in the format of the sign-in log
+  (`Sign-in log: type=… reason=… username=… …`), replacing the previous
+  `Failed login: …`, `Login ok: …` and `Request rejected: …` lines. The levels
+  are unchanged.
+- The history keeps up to `max_entries` (default 500) instead of 50 entries,
+  and entries older than `max_days` (default 7) are removed. The state of
+  `sensor.login_historik` is the number of stored entries and can therefore
+  go above 50; its attributes still show the newest 25. The 24-hour sensors
+  are unaffected.
+- `manifest.json` declares `panel_custom` and `websocket_api` as
+  dependencies.
+
+No events, event fields, entity IDs or `unique_id`s were removed or renamed.
+
 ## [0.6.0] - 2026-10-14
 
 ### Added
@@ -130,6 +166,7 @@ unchanged.
   a failed login attempt
   ([home-assistant/core#148110](https://github.com/home-assistant/core/issues/148110)).
 
-[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/fuglphoenix/ha-login-detail/releases/tag/v0.5.0

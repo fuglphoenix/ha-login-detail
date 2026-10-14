@@ -34,12 +34,22 @@ Passwords and TOTP codes are never read, logged or forwarded.
 
 | Event | Fields |
 |---|---|
-| `login_detail_failed` | `username`, `ip_address`, `reason`, `flow_id`, `auth_provider`, `endpoint` |
-| `login_detail_succeeded` | `username`, `ip_address`, `flow_id`, `auth_provider`, `endpoint` |
-| `login_detail_request_rejected` | `ip_address`, `endpoint`, `reason` |
+| `login_detail_failed` | `username`, `user_id`, `ip_address`, `reason`, `flow_id`, `auth_provider`, `endpoint`, `user_agent` |
+| `login_detail_succeeded` | `username`, `user_id`, `ip_address`, `flow_id`, `auth_provider`, `endpoint`, `user_agent` |
+| `login_detail_request_rejected` | `ip_address`, `endpoint`, `reason`, `user_agent` |
 
-Failed attempts are also logged at `WARNING`, successful logins and rejected
-requests at `INFO` (core already logs rejected requests at `WARNING`).
+`username` on a failed attempt is only filled in if it belongs to an existing
+user; otherwise it is `null`, so a password typed into the username field is
+never recorded. `user_id` is filled in whenever the user is known.
+`user_agent` is the client's `User-Agent` header, cut to 256 characters.
+
+Every event is also written as one line to the log - failed attempts at
+`WARNING`, successful logins and rejected requests at `INFO` (core already
+logs rejected requests at `WARNING`):
+
+```text
+Sign-in log: type=auth.login_failed reason=invalid_auth username=alice user_id=9f2c… auth_provider=homeassistant ip=192.0.2.10 endpoint=/auth/login_flow user_agent='Mozilla/5.0 …' flow_id=01J…
+```
 
 `login_detail_request_rejected` covers requests that are rejected for invalid
 authentication *outside* the login flow - typically a client with a wrong or
@@ -77,7 +87,7 @@ Six sensors are created automatically. No YAML, no helpers.
 | `sensor.login_ok_24t` | Number of successful logins in the last 24 hours, with per-IP, per-username and per-endpoint counts. |
 | `sensor.login_mislykkede_24t` | Number of failed login attempts and rejected requests in the last 24 hours, with per-IP, per-username and per-endpoint (`endpoints`) counts. |
 | `sensor.login_ip_adresser_24t` | Number of unique IP addresses that tried to log in or were rejected in the last 24 hours, with hostname, counts, usernames and endpoints per IP. |
-| `sensor.login_historik` | Number of stored events (up to 50); the latest 25 are in the attributes. |
+| `sensor.login_historik` | Number of stored events (up to the `max_entries` option, default 500); the latest 25 are in the attributes. |
 | `sensor.login_aktive_sessioner` | Active refresh tokens per user, with the IP address and time they were last used. System tokens are not counted. |
 
 The entity names, attribute keys and units are in Danish - see
@@ -118,11 +128,48 @@ Copy `custom_components/login_detail/` from this repository into
 
 1. Restart Home Assistant.
 2. Go to **Settings → Devices & services → Add integration → Login Detail**.
-   There is nothing to configure; the dialog is a confirmation.
+   The dialog is a confirmation. Retention and the side panel are set later
+   under **Configure** on the integration (see [Sign-in log](#sign-in-log)).
 
 Do **not** add `login_detail:` to `configuration.yaml`. If an older setup has
 the line, it is imported into a config entry automatically on the first
 startup, after which the line can be removed.
+
+## Sign-in log
+
+An admin-only panel, **Sign-in log**, in the sidebar shows every recorded
+event as one row, newest first: time, type, reason, username, user ID, login
+method, IP address, endpoint, user agent and flow ID. Repeated rejections
+from the same IP address on the same endpoint are one row with a count. The
+table can be filtered by type, user, IP address (prefix, so `192.0.2.`
+matches the range) and time span.
+
+The panel is a proof of concept for a sign-in log in core
+([architecture#1346](https://github.com/home-assistant/architecture/discussions/1346))
+and is built the way core would build it: the panel only talks to the
+websocket command `login_detail/sign_in_log/list`, which core refuses for
+users who are not administrators. Non-admin users do not see the panel.
+
+```json
+{"id": 1, "type": "login_detail/sign_in_log/list",
+ "log_type": "auth.login_failed", "ip": "192.0.2.", "limit": 100}
+```
+
+All filters are optional: `log_type` (`auth.login_failed`,
+`auth.login_success`, `auth.request_rejected`), `username`, `user_id`, `ip`,
+`start_time`, `end_time` (ISO 8601) and `limit`. The result is
+`{"entries": [...], "total": n, "max_entries": n, "max_days": n}`.
+
+**Options** (Settings → Devices & services → Login Detail → Configure):
+
+| Option | Default | Range |
+|---|---|---|
+| Maximum number of entries | 500 | 50-5000 |
+| Keep entries for (days) | 7 | 1-365 |
+| Show the Sign-in log panel | on | |
+
+An entry is deleted when either limit is reached. Expired entries are removed
+hourly, also when nothing new is logged.
 
 ## Automation example
 
@@ -156,12 +203,19 @@ alice from 203.0.113.7 (invalid_mfa_code)
 This integration processes personal data. Be aware of what it stores and
 where:
 
-- **Usernames and IP addresses are stored in plain text** - in the events, in
-  the Home Assistant log, in `.storage/login_detail_history` (up to 50
-  entries), in the sensor attributes and therefore in the recorder database.
-- Attempted usernames from failed logins are stored as typed. A user who types
-  their password into the username field will have their password stored as a
-  "username".
+- **Usernames, user IDs, IP addresses and user agents are stored in plain
+  text** - in the events, in the Home Assistant log, in
+  `.storage/login_detail_history`, in the sensor attributes and therefore in
+  the recorder database. The storage file is bounded by the retention options
+  (default 7 days and 500 entries); the log, the recorder and backups follow
+  their own retention.
+- The username of a failed login is only stored if it belongs to an existing
+  user, in the form Home Assistant stores it. Anything else - including a
+  password typed into the username field - is recorded as `null`. (Before
+  0.7.0 it was stored as typed.)
+- The Sign-in log panel and its websocket command are for administrators
+  only. Screenshots of the panel contain all of the above; anonymise them
+  before sharing.
 - Each IP address is looked up with **reverse DNS** using the DNS servers Home
   Assistant uses. That means a DNS query for the IP address of whoever tried
   to log in.

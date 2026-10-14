@@ -6,27 +6,42 @@ The former is a known, open gap in core: home-assistant/core#148110.
 
 This integration monkeypatches the login flow and fires two events:
 
-  login_detail_failed      username, ip_address, reason, flow_id, auth_provider,
-                           endpoint
-  login_detail_succeeded   username, ip_address, flow_id, auth_provider, endpoint
+  login_detail_failed      username, user_id, ip_address, reason, flow_id,
+                           auth_provider, endpoint, user_agent
+  login_detail_succeeded   username, user_id, ip_address, flow_id,
+                           auth_provider, endpoint, user_agent
 
 It also wraps core's `process_wrong_login`, which handles every request that
 is rejected for invalid authentication - a wrong or expired token on
 /api/mcp, /api/websocket, /auth/token and so on. Those are not login flows and
 carry no username, so they get their own event:
 
-  login_detail_request_rejected   ip_address, endpoint, reason
+  login_detail_request_rejected   ip_address, endpoint, reason, user_agent
 
-Failed login attempts are logged at WARNING, successful logins at INFO. The
-events are stored in `.storage/login_detail_history` and exposed as sensors
-(see sensor.py), so the history survives a restart.
+Every event is also written as one line to the log - failed login attempts at
+WARNING, everything else at INFO - stored in `.storage/login_detail_history`
+and exposed as sensors (see sensor.py), so the history survives a restart.
 
-Passwords and TOTP codes are never read, logged or forwarded.
+Passwords and TOTP codes are never read, logged or forwarded. The username
+of a failed attempt is only kept if it belongs to an existing user: people
+type their password into the username field, and it must not end up in the
+log, the events or the storage file.
+
+Sign-in log (0.7.0)
+-------------------
+The history is also offered as a sign-in log, in the shape proposed for core
+in home-assistant/architecture#1346: an admin-only websocket command
+(`login_detail/sign_in_log/list`, see websocket.py) and an admin-only side
+panel ("Sign-in log", see frontend/). It is laid out the way a core
+implementation would be - capture, storage, websocket API, page - so the
+backend can move into core more or less as is. The log holds personal data
+and is bounded by count and by age (options `max_entries` and `max_days`).
 
 Setup
 -----
 The integration is set up from the UI: Settings -> Devices & services ->
-Add integration -> Login Detail. There is nothing to configure.
+Add integration -> Login Detail. The options set the retention of the log and
+whether the side panel is shown.
 
 A `login_detail:` line in configuration.yaml is no longer needed. If it is
 still there, `async_setup` imports it once into a config entry
@@ -50,7 +65,8 @@ seeing.
 
 Written against Home Assistant 2026.10.1. The monkeypatch targets private API
 (`HassLoginFlow.async_step_init`, `LoginFlow.async_step_mfa`,
-`AuthManagerFlowManager.async_finish_flow`, and `process_wrong_login` in
+`AuthManagerFlowManager.async_finish_flow`, `HassAuthProvider.data`, and
+`process_wrong_login` in
 `homeassistant.components.http.ban` and
 `homeassistant.components.websocket_api.auth`) and may stop working with any
 core upgrade. If patching fails, it is logged at startup and login continues
@@ -59,14 +75,17 @@ unchanged.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 import logging
+from pathlib import Path
 import socket
 from typing import Any
 
 from homeassistant.auth import AuthManagerFlowManager
 from homeassistant.auth.providers import LoginFlow
 from homeassistant.auth.providers.homeassistant import HassLoginFlow
-from homeassistant.components.http import ban as http_ban
+from homeassistant.components import frontend, panel_custom
+from homeassistant.components.http import StaticPathConfig, ban as http_ban
 from homeassistant.components.websocket_api import auth as websocket_auth
 from homeassistant.config_entries import SOURCE_IMPORT, ConfigEntry
 from homeassistant.const import Platform
@@ -74,23 +93,39 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.http import current_request
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_MAX_DAYS,
+    CONF_MAX_ENTRIES,
+    CONF_SHOW_PANEL,
+    DEFAULT_MAX_DAYS,
+    DEFAULT_MAX_ENTRIES,
+    DEFAULT_SHOW_PANEL,
     DOMAIN,
     ENDPOINT_LOGIN_FLOW,
     EVENT_LOGIN_FAILED,
     EVENT_LOGIN_SUCCEEDED,
     EVENT_REQUEST_REJECTED,
-    HISTORY_LIMIT,
+    PANEL_COMPONENT,
+    PANEL_ICON,
+    PANEL_STATIC_URL,
+    PANEL_TITLE,
+    PANEL_URL_PATH,
+    PRUNE_INTERVAL,
     REJECTED_FOLD_WINDOW,
     RESULT_MFA_PENDING,
     RESULT_OK,
     RESULT_REQUEST_REJECTED,
     SIGNAL_UPDATED,
+    USER_AGENT_MAX_LENGTH,
 )
+from .websocket import async_register_websocket_commands, log_type_of
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,15 +143,25 @@ ENDPOINT_MAX_LENGTH = 200
 
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
+FRONTEND_DIR = Path(__file__).parent / "frontend"
+PANEL_MODULE = "sign-in-log-panel.js"
+
 
 class LoginDetailData:
     """History of login events, persisted to disk."""
 
-    def __init__(self, hass: HomeAssistant) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
+        max_days: int = DEFAULT_MAX_DAYS,
+    ) -> None:
         self.hass = hass
         self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self.history: list[dict[str, Any]] = []
         self._host_cache: dict[str, str | None] = {}
+        self.max_entries = max_entries
+        self.max_days = max_days
 
     async def async_load(self) -> None:
         """Read the history from disk. An unreadable file must not break startup."""
@@ -128,7 +173,33 @@ class LoginDetailData:
             )
             stored = None
         if isinstance(stored, dict) and isinstance(stored.get("history"), list):
-            self.history = stored["history"][:HISTORY_LIMIT]
+            self.history = stored["history"][: self.max_entries]
+        if self._prune():
+            self._async_save()
+
+    def _prune(self) -> bool:
+        """Drop entries beyond the retention limits. True if any were dropped.
+
+        The age limit is checked on every entry, not just the tail: the list
+        is newest first, but a folded rejection moves to the front with a new
+        timestamp, and the file may have been edited by hand.
+        """
+        before = len(self.history)
+        cutoff = dt_util.utcnow() - timedelta(days=self.max_days)
+        kept = []
+        for entry in self.history[: self.max_entries]:
+            seen = dt_util.parse_datetime(entry.get("timestamp") or "")
+            if seen is not None and seen >= cutoff:
+                kept.append(entry)
+        self.history = kept
+        return len(kept) != before
+
+    @callback
+    def async_prune_tick(self, now: datetime | None = None) -> None:
+        """Remove expired entries on a timer, so they go even when it is quiet."""
+        if self._prune():
+            self._async_save()
+            async_dispatcher_send(self.hass, SIGNAL_UPDATED)
 
     @callback
     def _async_save(self) -> None:
@@ -158,7 +229,7 @@ class LoginDetailData:
         cached = ip_address in self._host_cache if ip_address else False
         entry["hostname"] = self._host_cache.get(ip_address) if cached else None
         self.history.insert(0, entry)
-        del self.history[HISTORY_LIMIT:]
+        del self.history[self.max_entries :]
         self._async_save()
         async_dispatcher_send(self.hass, SIGNAL_UPDATED)
         if ip_address and not cached:
@@ -173,7 +244,7 @@ class LoginDetailData:
 
         A client with a stale token retries on its own, often every few
         seconds. Without folding, one such client would push every real login
-        attempt out of the 50-entry history. A repeat from the same IP address
+        attempt out of the bounded history. A repeat from the same IP address
         on the same endpoint within REJECTED_FOLD_WINDOW raises the count of
         the existing entry and moves it to the front instead.
         """
@@ -191,6 +262,9 @@ class LoginDetailData:
             del self.history[index]
             previous["timestamp"] = entry["timestamp"]
             previous["count"] = int(previous.get("count") or 1) + 1
+            # The newest client wins - a fold is one IP on one endpoint, and
+            # it is usually the same client anyway.
+            previous["user_agent"] = entry.get("user_agent")
             self.history.insert(0, previous)
             self._async_save()
             async_dispatcher_send(self.hass, SIGNAL_UPDATED)
@@ -244,46 +318,28 @@ def _report(
     hass: HomeAssistant,
     result: str,
     username: str | None,
+    user_id: str | None,
     ip_address: Any,
     flow: Any,
     flow_id: str,
 ) -> None:
-    """Log and fire one login event. Must never raise."""
+    """Log, fire and store one login event. Must never raise."""
     data = {
         "username": username,
+        "user_id": user_id,
         "ip_address": str(ip_address) if ip_address is not None else None,
         "reason": result,
         "flow_id": flow_id,
         "auth_provider": _provider_of(flow),
         "endpoint": ENDPOINT_LOGIN_FLOW,
+        "user_agent": _user_agent_of(current_request.get()),
     }
 
+    _log_line(result, data)
     if result == RESULT_OK:
         del data["reason"]
-        _LOGGER.info(
-            "Login ok: user=%s ip=%s method=%s flow=%s",
-            data["username"],
-            data["ip_address"],
-            data["auth_provider"],
-            flow_id,
-        )
         hass.bus.async_fire(EVENT_LOGIN_SUCCEEDED, data)
-    elif result == RESULT_MFA_PENDING:
-        _LOGGER.info(
-            "Password correct, waiting for 2FA: user=%s ip=%s flow=%s",
-            data["username"],
-            data["ip_address"],
-            flow_id,
-        )
-        hass.bus.async_fire(EVENT_LOGIN_FAILED, data)
     else:
-        _LOGGER.warning(
-            "Failed login: user=%s ip=%s reason=%s flow=%s",
-            data["username"],
-            data["ip_address"],
-            result,
-            flow_id,
-        )
         hass.bus.async_fire(EVENT_LOGIN_FAILED, data)
 
     # The monkeypatch sits on core classes and has no config entry to look up.
@@ -296,28 +352,53 @@ def _report(
             "timestamp": dt_util.utcnow().isoformat(),
             "result": result,
             "username": data["username"],
+            "user_id": data["user_id"],
             "ip_address": data["ip_address"],
             "auth_provider": data["auth_provider"],
             "flow_id": flow_id,
             "endpoint": ENDPOINT_LOGIN_FLOW,
+            "user_agent": data["user_agent"],
         }
     )
 
 
-def _report_rejected(hass: HomeAssistant, request: Any) -> None:
-    """Log and fire one rejected request. Must never raise.
+def _log_line(result: str, data: dict[str, Any]) -> None:
+    """One log line per event, with the fields of the sign-in log.
 
-    Core has already logged the full URL at WARNING. This line only adds what
-    the history stores, so it is INFO.
+    A failed login attempt is a WARNING. Everything else - a login, a login
+    waiting for 2FA, a rejected request (which core has already logged at
+    WARNING with the full URL) - is INFO.
     """
+    level = (
+        logging.INFO
+        if result in (RESULT_OK, RESULT_MFA_PENDING, RESULT_REQUEST_REJECTED)
+        else logging.WARNING
+    )
+    _LOGGER.log(
+        level,
+        "Sign-in log: type=%s reason=%s username=%s user_id=%s auth_provider=%s "
+        "ip=%s endpoint=%s user_agent=%r flow_id=%s",
+        log_type_of(result),
+        None if result == RESULT_OK else result,
+        data.get("username"),
+        data.get("user_id"),
+        data.get("auth_provider"),
+        data.get("ip_address"),
+        data.get("endpoint"),
+        data.get("user_agent"),
+        data.get("flow_id"),
+    )
+
+
+def _report_rejected(hass: HomeAssistant, request: Any) -> None:
+    """Log, fire and store one rejected request. Must never raise."""
     data = {
         "ip_address": str(request.remote) if request.remote is not None else None,
         "endpoint": _endpoint_of(request),
         "reason": RESULT_REQUEST_REJECTED,
+        "user_agent": _user_agent_of(request),
     }
-    _LOGGER.info(
-        "Request rejected: ip=%s endpoint=%s", data["ip_address"], data["endpoint"]
-    )
+    _log_line(RESULT_REQUEST_REJECTED, data)
     hass.bus.async_fire(EVENT_REQUEST_REJECTED, data)
 
     store = hass.data.get(DOMAIN)
@@ -328,10 +409,12 @@ def _report_rejected(hass: HomeAssistant, request: Any) -> None:
             "timestamp": dt_util.utcnow().isoformat(),
             "result": RESULT_REQUEST_REJECTED,
             "username": None,
+            "user_id": None,
             "ip_address": data["ip_address"],
             "auth_provider": None,
             "flow_id": None,
             "endpoint": data["endpoint"],
+            "user_agent": data["user_agent"],
         }
     )
 
@@ -355,6 +438,22 @@ def _endpoint_of(request: Any) -> str | None:
     return endpoint[:ENDPOINT_MAX_LENGTH] if endpoint else None
 
 
+def _user_agent_of(request: Any) -> str | None:
+    """The client's User-Agent header, cut to a fixed length.
+
+    The login flow steps do not get the request, but core keeps the request
+    being handled in the `current_request` context variable - the same one
+    `get_url` relies on - so it is there for the flow steps too.
+    """
+    if request is None:
+        return None
+    try:
+        user_agent = request.headers.get("User-Agent")
+    except Exception:  # noqa: BLE001 - not an aiohttp request
+        return None
+    return user_agent[:USER_AGENT_MAX_LENGTH] if user_agent else None
+
+
 def _provider_of(flow: Any) -> str | None:
     provider = getattr(flow, "_auth_provider", None)
     return getattr(provider, "type", None)
@@ -374,6 +473,67 @@ def _username_of(flow: Any) -> str | None:
             return str(username)
     user = getattr(flow, "user", None)
     return getattr(user, "name", None)
+
+
+def _user_id_of(flow: Any) -> str | None:
+    """User id of a flow that has got past the password step into 2FA."""
+    return getattr(getattr(flow, "user", None), "id", None)
+
+
+async def _async_known_user(
+    hass: HomeAssistant, flow: Any, username: str | None
+) -> tuple[str | None, str | None]:
+    """The stored username and user id, if `username` belongs to a user.
+
+    A failed attempt's username is free text, and a password typed into the
+    username field must not end up in the log. So the username is only
+    returned if the Home Assistant auth provider knows it - in the form it is
+    stored in, not as typed - and (None, None) otherwise.
+    """
+    provider = getattr(flow, "_auth_provider", None)
+    data = getattr(provider, "data", None)
+    if data is None:
+        return None, None
+    wanted = data.normalize_username(username or "")
+    # Both lists are walked in full whether the name is known or not, like
+    # core's own validate_login, so the time the failed login takes to answer
+    # does not tell whether the username exists.
+    known: str | None = None
+    for stored in data.users:
+        if data.normalize_username(stored.get("username") or "") == wanted:
+            known = stored["username"]
+    user_id: str | None = None
+    for user in await hass.auth.async_get_users():
+        for credential in user.credentials:
+            if (
+                credential.auth_provider_type == provider.type
+                and credential.auth_provider_id == provider.id
+                and data.normalize_username(credential.data.get("username") or "")
+                == wanted
+            ):
+                user_id = user.id
+    if not username or known is None:
+        return None, None
+    # A user that exists in the provider but has never logged in has no
+    # credentials and therefore no user to link to.
+    return known, user_id
+
+
+async def _async_user_id_of_result(
+    hass: HomeAssistant, flow: Any, flow_result: Any
+) -> str | None:
+    """User id for a completed login, if the credentials belong to a user.
+
+    Credentials that are new are linked to a user only after this point, by
+    core's login flow view, so they have none yet.
+    """
+    user_id = _user_id_of(flow)
+    if user_id is not None:
+        return user_id
+    if getattr(flow_result, "is_new", True):
+        return None
+    user = await hass.auth.async_get_user_by_credentials(flow_result)
+    return getattr(user, "id", None)
 
 
 def _username_of_result(flow: Any, flow_result: Any) -> str | None:
@@ -438,10 +598,14 @@ class _CorePatch:
                 if user_input is not None:
                     errors = result.get("errors") or {}
                     if errors.get("base") == "invalid_auth":
+                        username, user_id = await _async_known_user(
+                            hass, self, user_input.get("username")
+                        )
                         _report(
                             hass,
                             "invalid_auth",
-                            user_input.get("username"),
+                            username,
+                            user_id,
                             _ip_of(self),
                             self,
                             self.flow_id,
@@ -472,6 +636,7 @@ class _CorePatch:
                             hass,
                             reason,
                             _username_of(self),
+                            _user_id_of(self),
                             _ip_of(self),
                             self,
                             self.flow_id,
@@ -498,6 +663,9 @@ class _CorePatch:
                             hass,
                             RESULT_OK,
                             _username_of_result(flow, outcome.get("result")),
+                            await _async_user_id_of_result(
+                                hass, flow, outcome.get("result")
+                            ),
                             _ip_of(flow),
                             flow,
                             flow.flow_id,
@@ -507,6 +675,7 @@ class _CorePatch:
                             hass,
                             RESULT_MFA_PENDING,
                             _username_of_result(flow, result.get("data")),
+                            _user_id_of(flow),
                             _ip_of(flow),
                             flow,
                             flow.flow_id,
@@ -571,9 +740,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Import a legacy `login_detail:` line into a config entry, if present.
 
     The actual setup happens in async_setup_entry. If the line is not in
-    configuration.yaml, this function does nothing - the integration is set
-    up from the UI.
+    configuration.yaml, this function only registers the websocket command -
+    the integration is set up from the UI.
     """
+    async_register_websocket_commands(hass)
     if DOMAIN in config:
         hass.async_create_task(
             hass.config_entries.flow.async_init(
@@ -585,14 +755,49 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the integration from a config entry."""
-    data = LoginDetailData(hass)
+    data = LoginDetailData(
+        hass,
+        max_entries=entry.options.get(CONF_MAX_ENTRIES, DEFAULT_MAX_ENTRIES),
+        max_days=entry.options.get(CONF_MAX_DAYS, DEFAULT_MAX_DAYS),
+    )
     await data.async_load()
     hass.data[DOMAIN] = data
 
     _PATCH.apply(hass)
 
+    entry.async_on_unload(
+        async_track_time_interval(hass, data.async_prune_tick, PRUNE_INTERVAL)
+    )
+    if entry.options.get(CONF_SHOW_PANEL, DEFAULT_SHOW_PANEL):
+        await _async_register_panel(hass)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_register_panel(hass: HomeAssistant) -> None:
+    """The admin-only "Sign-in log" panel in the sidebar.
+
+    A static path cannot be unregistered, so it is registered once per run
+    of Home Assistant; the panel itself comes and goes with the entry. The
+    version in the URL makes the browser fetch the module again after an
+    upgrade.
+    """
+    if not hass.data.get(f"{DOMAIN}_static"):
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(PANEL_STATIC_URL, str(FRONTEND_DIR), False)]
+        )
+        hass.data[f"{DOMAIN}_static"] = True
+    integration = await async_get_integration(hass, DOMAIN)
+    await panel_custom.async_register_panel(
+        hass,
+        frontend_url_path=PANEL_URL_PATH,
+        webcomponent_name=PANEL_COMPONENT,
+        sidebar_title=PANEL_TITLE,
+        sidebar_icon=PANEL_ICON,
+        module_url=f"{PANEL_STATIC_URL}/{PANEL_MODULE}?v={integration.version}",
+        require_admin=True,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -600,6 +805,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unloaded:
         _PATCH.revert()
+        frontend.async_remove_panel(hass, PANEL_URL_PATH, warn_if_unknown=False)
         data = hass.data.pop(DOMAIN, None)
         if isinstance(data, LoginDetailData):
             await data.async_flush()

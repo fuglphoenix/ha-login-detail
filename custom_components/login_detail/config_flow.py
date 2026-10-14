@@ -1,7 +1,10 @@
 """Set up login_detail from the UI.
 
-The integration has no options. The flow is therefore a plain confirmation:
-Settings -> Devices & services -> Add integration -> Login Detail.
+Setting up is a plain confirmation: Settings -> Devices & services -> Add
+integration -> Login Detail. The options (the cog on the entry) set how long
+the sign-in log is kept - by number of entries and by age - and whether the
+admin-only "Sign-in log" panel is shown in the sidebar. Saving the options
+reloads the entry.
 
 `single_config_entry: true` in the manifest makes core reject attempts to
 create a second entry. The check in `async_step_user` is belt and braces - it
@@ -16,16 +19,41 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlowWithReload,
+)
+from homeassistant.core import callback
 import probatio
 
-from .const import DOMAIN, TITLE
+from .const import (
+    CONF_MAX_DAYS,
+    CONF_MAX_ENTRIES,
+    CONF_SHOW_PANEL,
+    DEFAULT_MAX_DAYS,
+    DEFAULT_MAX_ENTRIES,
+    DEFAULT_SHOW_PANEL,
+    DOMAIN,
+    MAX_DAYS,
+    MAX_ENTRIES,
+    MIN_DAYS,
+    MIN_ENTRIES,
+    TITLE,
+)
 
 
 class LoginDetailConfigFlow(ConfigFlow, domain=DOMAIN):
     """Config flow for login_detail."""
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> LoginDetailOptionsFlow:
+        """Retention and panel."""
+        return LoginDetailOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -44,3 +72,37 @@ class LoginDetailConfigFlow(ConfigFlow, domain=DOMAIN):
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
         return self.async_create_entry(title=TITLE, data={})
+
+
+class LoginDetailOptionsFlow(OptionsFlowWithReload):
+    """Retention of the sign-in log, and the side panel."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """One form with all options."""
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        options = self.config_entry.options
+        schema = probatio.Schema(
+            {
+                probatio.Required(
+                    CONF_MAX_ENTRIES,
+                    default=options.get(CONF_MAX_ENTRIES, DEFAULT_MAX_ENTRIES),
+                ): probatio.All(
+                    probatio.Coerce(int),
+                    probatio.Range(min=MIN_ENTRIES, max=MAX_ENTRIES),
+                ),
+                probatio.Required(
+                    CONF_MAX_DAYS,
+                    default=options.get(CONF_MAX_DAYS, DEFAULT_MAX_DAYS),
+                ): probatio.All(
+                    probatio.Coerce(int), probatio.Range(min=MIN_DAYS, max=MAX_DAYS)
+                ),
+                probatio.Required(
+                    CONF_SHOW_PANEL,
+                    default=options.get(CONF_SHOW_PANEL, DEFAULT_SHOW_PANEL),
+                ): bool,
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

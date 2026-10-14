@@ -10,5 +10,18 @@
     "abort": {
       "single_instance_allowed": "Login Detail is already set up."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Sign-in log",
+        "description": "The sign-in log holds personal data (username, IP address, user agent). Entries are removed when either limit is reached.",
+        "data": {
+          "max_entries": "Maximum number of entries",
+          "max_days": "Keep entries for (days)",
+          "show_panel": "Show the Sign-in log panel in the sidebar (administrators only)"
+        }
+      }
+    }
   }
 }

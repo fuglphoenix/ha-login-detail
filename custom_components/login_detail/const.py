@@ -15,7 +15,8 @@ EVENT_REQUEST_REJECTED = "login_detail_request_rejected"
 
 SIGNAL_UPDATED = f"{DOMAIN}_updated"
 
-# Number of events stored on disk and shown in the sensor attributes.
+# The smallest number of events stored on disk, and the number the sensors
+# looked at before 0.7.0. The actual cap is the `max_entries` option.
 HISTORY_LIMIT = 50
 HISTORY_ATTRIBUTE_LIMIT = 25
 
@@ -46,3 +47,40 @@ ENDPOINT_LOGIN_FLOW = "/auth/login_flow"
 # client retrying every few seconds cannot push real login attempts out of the
 # history.
 REJECTED_FOLD_WINDOW = timedelta(minutes=10)
+
+# ---- Sign-in log (0.7.0) ---------------------------------------------------
+
+# The `type` of an entry in the sign-in log, as proposed for core in
+# home-assistant/architecture#1346.
+LOG_TYPE_LOGIN_FAILED = "auth.login_failed"
+LOG_TYPE_LOGIN_SUCCESS = "auth.login_success"
+LOG_TYPE_REQUEST_REJECTED = "auth.request_rejected"
+LOG_TYPES = (LOG_TYPE_LOGIN_FAILED, LOG_TYPE_LOGIN_SUCCESS, LOG_TYPE_REQUEST_REJECTED)
+
+# A user agent is free text set by the client. It is cut, not parsed.
+USER_AGENT_MAX_LENGTH = 256
+
+# Retention, configurable in the options. The log holds personal data
+# (username, IP address, user agent), so it is bounded both by count and by
+# age, whichever comes first.
+CONF_MAX_ENTRIES = "max_entries"
+CONF_MAX_DAYS = "max_days"
+CONF_SHOW_PANEL = "show_panel"
+DEFAULT_MAX_ENTRIES = 500
+DEFAULT_MAX_DAYS = 7
+DEFAULT_SHOW_PANEL = True
+MIN_ENTRIES = HISTORY_LIMIT
+MAX_ENTRIES = 5000
+MIN_DAYS = 1
+MAX_DAYS = 365
+
+# How often entries older than the age limit are removed, so they disappear
+# even when nothing new is recorded.
+PRUNE_INTERVAL = timedelta(hours=1)
+
+# The admin-only side panel.
+PANEL_URL_PATH = "login-detail"
+PANEL_COMPONENT = "login-detail-sign-in-log"
+PANEL_TITLE = "Sign-in log"
+PANEL_ICON = "mdi:shield-account-outline"
+PANEL_STATIC_URL = f"/{DOMAIN}_static"

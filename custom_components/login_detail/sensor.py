@@ -164,7 +164,7 @@ class LoginDetailSensor(SensorEntity):
         The whole list is walked on purpose. An early `break` would assume
         the history is always sorted - and that does not hold if the storage
         file has been edited or the clock has jumped. The list is at most
-        HISTORY_LIMIT long, so there is nothing to save.
+        `max_entries` long (5000 at the very most), so there is little to save.
         """
         cutoff = dt_util.utcnow() - WINDOW
         recent = []
