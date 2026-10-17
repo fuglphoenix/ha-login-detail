@@ -11,6 +11,18 @@
   `trusted_proxies`. Behind a reverse proxy that is not trusted, or behind
   source NAT (including hairpin NAT for local clients), several clients can
   show up with the same address.
+- **`x_forwarded_for_untrusted` is whatever the client sent.** Anyone can
+  put any address in an `X-Forwarded-For` header. Use it to debug a proxy,
+  never as the client's address; `ip_address` is the one Home Assistant
+  resolved. `host` is set by the client too.
+- **`ingress: nabu_casa` is untested against a real Home Assistant Cloud
+  connection.** It uses core's own `is_cloud_connection`, which reads the
+  flag the Cloud integration sets for remote connections. The acceptance
+  test runs without Cloud and covers `direct` only.
+- **An authorization code grant on `/auth/token` has one reason for several
+  causes.** Core uses the code up when it checks it, so afterwards an
+  unknown, expired or reused code, a wrong PKCE verifier and a user who is not
+  allowed all show as `invalid_authorization_code`.
 - **Rejected requests on ordinary views need IP banning enabled.** A 401 on
   `/api/mcp`, `/api/states` and other REST views only reaches core's
   `process_wrong_login` through the IP ban middleware, which Home Assistant

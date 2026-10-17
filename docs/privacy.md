@@ -9,9 +9,23 @@ where:
   the recorder database. The storage file is bounded by the retention options
   (default 7 days and 500 entries); the log, the recorder and backups follow
   their own retention.
+- **Since 0.10.0, the `Host` header and the raw `X-Forwarded-For` header**
+  (`host`, `x_forwarded_for_untrusted`) and whether the request came through
+  Nabu Casa (`ingress`) are stored too, on every event: in the events, the
+  log, `.storage/login_detail_history`, the Sign-in log panel and its
+  websocket command. They are not in the sensor attributes. An
+  `X-Forwarded-For` header can hold several IP addresses - the client's and
+  every proxy's - and **is set by the client: it can be forged** and must not
+  be taken as the client's address. Both are cut to 200 characters.
 - A rejected request names a user, an OAuth client ID and the name of a
-  long-lived token only when the token's signature proves it. Tokens
-  themselves are never stored.
+  long-lived token only when the token's signature proves it. On
+  `/auth/token` (0.10.0) the event also has the grant type and the client ID
+  the request asked for (a public URL), and names the user only if the
+  refresh token sent exists.
+- **Tokens, refresh tokens, authorization codes, passwords, TOTP codes and
+  request bodies are never stored or logged**, not even at debug level. Only
+  what is derived from them is kept: the result of looking the token up
+  (user, token type, the name of a long-lived token) and the client ID.
 - The username of a failed login is only stored if it belongs to an existing
   user, in the form Home Assistant stores it. Anything else - including a
   password typed into the username field - is recorded as `null`. (Before

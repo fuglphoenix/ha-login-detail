@@ -53,6 +53,11 @@ LOG_FIELDS = {
     "client_id",
     "client_name",
     "token_type",
+    # 0.10.0
+    "grant_type",
+    "ingress",
+    "host",
+    "x_forwarded_for_untrusted",
 }
 
 _LOGGER = logging.getLogger(__name__)

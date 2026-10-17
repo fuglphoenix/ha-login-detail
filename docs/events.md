@@ -7,9 +7,9 @@ and the Sign-in log panel, see the [README](../README.md).
 
 | Event | Fields |
 |---|---|
-| `login_detail_failed` | `username`, `user_id`, `ip_address`, `reason`, `flow_id`, `auth_provider`, `endpoint`, `user_agent` |
-| `login_detail_succeeded` | `username`, `user_id`, `ip_address`, `flow_id`, `auth_provider`, `endpoint`, `user_agent` |
-| `login_detail_request_rejected` | `ip_address`, `endpoint`, `reason`, `rejection`, `user_id`, `username`, `client_id`, `client_name`, `token_type`, `user_agent` |
+| `login_detail_failed` | `username`, `user_id`, `ip_address`, `reason`, `flow_id`, `auth_provider`, `endpoint`, `user_agent`, `ingress`, `host`, `x_forwarded_for_untrusted` |
+| `login_detail_succeeded` | `username`, `user_id`, `ip_address`, `flow_id`, `auth_provider`, `endpoint`, `user_agent`, `ingress`, `host`, `x_forwarded_for_untrusted` |
+| `login_detail_request_rejected` | `ip_address`, `endpoint`, `reason`, `rejection`, `user_id`, `username`, `client_id`, `client_name`, `token_type`, `grant_type`, `user_agent`, `ingress`, `host`, `x_forwarded_for_untrusted` |
 
 `username` on a failed attempt is only filled in if it belongs to an existing
 user; otherwise it is `null`, so a password typed into the username field is
@@ -23,17 +23,37 @@ typed - cut to 64 characters, control characters replaced by `\ufffd` - and
 Without the option, or for a user that exists, the field is absent:
 
 ```text
-Sign-in log: type=auth.login_failed reason=invalid_auth username='admin' user_id=None auth_provider=homeassistant client_id=None token_type=None client_name=None ip=203.0.113.7 endpoint=/auth/login_flow user_agent='…' flow_id=01J… known_user=False
+Sign-in log: type=auth.login_failed reason=invalid_auth username='admin' user_id=None auth_provider=homeassistant client_id=None token_type=None client_name=None grant_type=None ip=203.0.113.7 endpoint=/auth/login_flow user_agent='…' flow_id=01J… ingress=direct host='ha.example.com' x_forwarded_for_untrusted=None known_user=False
 ```
 `user_agent` is the client's `User-Agent` header, cut to 256 characters.
+
+### How the request came in (0.10.0)
+
+| Field | Meaning | Can it be trusted? |
+|---|---|---|
+| `ingress` | `nabu_casa` for a request through Home Assistant Cloud remote access, `direct` for everything else (LAN, your own reverse proxy, port forwarding). | Yes - it comes from the Cloud integration, not from the request. |
+| `host` | The `Host` header, for example `ha.example.com:8443`. Shows which name or proxy the client used. | Set by the client. |
+| `x_forwarded_for_untrusted` | The raw `X-Forwarded-For` header, the whole chain as sent (several headers joined with `, `). `null` when there is none. | **No.** Anyone can send any value in this header. |
+
+`ip_address` stays the address Home Assistant resolved itself, which takes
+`X-Forwarded-For` into account only when the request came from one of your
+`trusted_proxies`. `x_forwarded_for_untrusted` is there to debug a proxy
+setup - to see what the proxy (or a client pretending to be one) sent - and
+must not be read as the client's address. That is why the field carries
+"untrusted" in its name, and why the Sign-in log panel marks it so. `host`
+and `x_forwarded_for_untrusted` are cut to 200 characters, with control
+characters replaced by `\ufffd`.
+
+All three are `null` on entries stored before 0.10.0.
 
 Every event is also written as one line to the log - failed attempts at
 `WARNING`, successful logins and rejected requests at `INFO` (core already
 logs rejected requests at `WARNING`):
 
 ```text
-Sign-in log: type=auth.login_failed reason=invalid_auth username=alice user_id=9f2c… auth_provider=homeassistant client_id=None token_type=None client_name=None ip=192.0.2.10 endpoint=/auth/login_flow user_agent='Mozilla/5.0 …' flow_id=01J…
-Sign-in log: type=auth.request_rejected reason=expired_token username=alice user_id=9f2c… auth_provider=None client_id=https://mcp-client.example token_type=normal client_name=None ip=192.0.2.10 endpoint=/api/mcp user_agent='…' flow_id=None
+Sign-in log: type=auth.login_failed reason=invalid_auth username=alice user_id=9f2c… auth_provider=homeassistant client_id=None token_type=None client_name=None grant_type=None ip=192.0.2.10 endpoint=/auth/login_flow user_agent='Mozilla/5.0 …' flow_id=01J… ingress=direct host='192.0.2.2:8123' x_forwarded_for_untrusted=None
+Sign-in log: type=auth.request_rejected reason=expired_token username=alice user_id=9f2c… auth_provider=None client_id=https://mcp-client.example token_type=normal client_name=None grant_type=None ip=192.0.2.10 endpoint=/api/mcp user_agent='…' flow_id=None ingress=nabu_casa host='abc123.ui.nabu.casa' x_forwarded_for_untrusted=None
+Sign-in log: type=auth.request_rejected reason=unknown_or_revoked_token username=None user_id=None auth_provider=None client_id=https://home-assistant.io/iOS token_type=None client_name=None grant_type=refresh_token ip=192.0.2.10 endpoint=/auth/token user_agent='Home Assistant/2026.10 …' flow_id=None ingress=direct host='ha.example.com' x_forwarded_for_untrusted='198.51.100.23' 
 ```
 
 `login_detail_request_rejected` covers requests that are rejected for invalid
@@ -74,12 +94,40 @@ the event and in `reason` in the sign-in log and the log line:
 | `no_credentials` | No token at all - for example an MCP client's first call, which core answers with 401 and `WWW-Authenticate` so the client starts OAuth. | - |
 | `expired_token` | A token that really was issued to this user, but has expired. | yes |
 | `user_not_allowed` | A valid, unexpired token, but core does not let the user in: the user is set to local access only and connects from outside. | yes |
-| `unknown_or_revoked_token` | A token for a refresh token that does not exist (any more) - revoked, logged out, or the user was deactivated - or a forged or garbled token. | - |
-| `malformed_credentials` | An `Authorization` header that is not `Bearer <token>`, or a websocket auth message without a usable token. | - |
+| `unknown_or_revoked_token` | A token for a refresh token that does not exist (any more) - revoked, logged out, the user was deactivated or deleted - or a token with a forged signature. On `/auth/token`: a refresh grant whose refresh token does not exist (any more). | - |
+| `malformed_credentials` | An `Authorization` header that is not `Bearer <token>`, a websocket auth message without a usable token, or (since 0.10.0) a bearer value that is not a JWT at all, such as a random string. On `/auth/token`: a refresh grant without a refresh token. | - |
 | `invalid_signed_path` | A signed path (`authSig`) that core did not accept. | - |
 | `not_admin` | A valid user, turned away by the endpoint because they are not an administrator - for example the MCP server with "require admin" on. | yes |
 | `permission_denied` | The same for an administrator (another permission check). | yes |
-| `invalid_auth_request` | `/auth/token` or `/auth/login_flow` rejected the request, for example a refresh token that no longer exists. The request body is not read. | - |
+| `invalid_auth_request` | `/auth/login_flow` rejected the request - or `/auth/token` did, and its form could not be read (or the self-check switched the `/auth/token` details off, see [Upgrading](upgrading.md#after-a-home-assistant-upgrade)). | - |
+| `invalid_client_id` | `/auth/token`: the `client_id` is missing or not a valid URL. The value is not stored. | - |
+| `client_id_mismatch` | `/auth/token`: a real refresh token, sent with another `client_id` than the one it was issued to. | yes |
+| `invalid_authorization_code` | `/auth/token`: an authorization code grant that failed - the code is unknown, expired or already used, the PKCE verifier did not match, or the user is not allowed in. Core has used the code up by then, so these cannot be told apart. | - |
+| `unsupported_grant_type` | `/auth/token`: no `grant_type`, or one core does not know. | - |
+
+On `/auth/token`, `user_not_allowed` means a real refresh token of a user who
+is inactive or local only and connects from outside.
+
+### `/auth/token` (0.10.0)
+
+For a request `/auth/token` turned down, the event also has `grant_type`
+(`refresh_token`, `authorization_code`, or `other` for anything else - the
+value the client sent is not stored) and `client_id`, the OAuth client ID the
+request **asked for**, for example `https://home-assistant.io/iOS`. A client
+ID is a public URL, not a secret; one that is not a valid URL is not stored.
+
+Core's token view has already read and parsed the form by the time it
+rejects the request, and aiohttp keeps the parsed form on the request. Login
+Detail looks at that copy in memory - it does not read anything from the
+network again - and keeps only `grant_type` and `client_id`. The refresh
+token, the authorization code and the PKCE verifier in the form are never
+stored, logged or shown. A refresh token is looked up the way core looks it
+up (`async_get_refresh_token_by_token`, a constant-time comparison); only if
+it exists are its user and token type named, because whoever sent it holds
+it.
+
+Before 0.10.0 every rejection on `/auth/token` was `invalid_auth_request`,
+and a bearer value that is not a JWT was `unknown_or_revoked_token`.
 
 **User and client are only filled in when it is proven.** For a rejected
 token, the token's signature is checked against the key of the refresh token
@@ -119,8 +167,10 @@ All filters are optional: `log_type` (`auth.login_failed`,
 
 Each entry has `ts`, `type`, `reason`, `username`, `user_id`,
 `auth_provider`, `ip`, `hostname`, `endpoint`, `user_agent`, `flow_id`,
-`count`, and since 0.7.1 `client_id`, `client_name` and `token_type`. The
-last three are only set for a rejected request whose token was proven (see
-[Rejected requests](#rejected-requests)); otherwise they are `null`. An entry
+`count`, since 0.7.1 `client_id`, `client_name` and `token_type`, and since
+0.10.0 `grant_type`, `ingress`, `host` and `x_forwarded_for_untrusted`. The
+client fields are only set for a rejected request whose token was proven, or
+on `/auth/token` (see [Rejected requests](#rejected-requests)); otherwise they
+are `null`. An entry
 whose username no user has (see [Events](#events)) also has
 `known_user: false`; no other entry has that key.

@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-17
+
+### Added
+- **Why `/auth/token` turned a grant down** - the case behind most reports
+  in home-assistant/core#148110 (a phone app or browser with a dead refresh
+  token). `rejection` on `login_detail_request_rejected` is now
+  `unknown_or_revoked_token`, `client_id_mismatch`, `user_not_allowed`,
+  `invalid_client_id`, `malformed_credentials`, `invalid_authorization_code`
+  or `unsupported_grant_type` instead of `invalid_auth_request`, and the event
+  has `grant_type` and the requested `client_id`. The user is named only if
+  the refresh token sent exists. Read from the form core has already parsed;
+  the refresh token, code and verifier are never stored or logged. See
+  "/auth/token" in docs/events.md.
+- **How the request came in**, on every event, history entry and websocket
+  entry: `ingress` (`nabu_casa` or `direct`), `host` (the Host header) and
+  `x_forwarded_for_untrusted` (the raw X-Forwarded-For chain). The latter is
+  set by the client and can be forged; its name and the Sign-in log panel say
+  so. `ip_address` is unchanged.
+- Three columns in the Sign-in log panel: Ingress, Host and
+  "X-Forwarded-For (untrusted)"; the grant type is shown on hover over the
+  client.
+- **A startup self-check** of the private core API behind the rejection
+  details: the access token format and `async_get_refresh_token` (0.7.1), and
+  the `/auth/token` view and `async_get_refresh_token_by_token` (0.10.0).
+  A feature that no longer matches is switched off with a WARNING and falls
+  back to what was reported before it existed, instead of failing silently
+  or guessing. `login_detail self-check passed: ...` is logged at INFO when
+  all is well. See docs/upgrading.md.
+- Acceptance probe F (`login_detail_probe6`).
+
+### Changed
+- A bearer value that is not a JWT at all - a random string - is now
+  `malformed_credentials` instead of `unknown_or_revoked_token`.
+- The log line has four more fields: `grant_type`, `ingress`, `host` and
+  `x_forwarded_for_untrusted`.
+- A folded rejection keeps the newest `ingress`, `host` and
+  `x_forwarded_for_untrusted`, like the user agent.
+
+No events, event fields, entity IDs, unique IDs or attribute keys were
+removed or renamed. `user_agent` (0.7.0) and the token identification of
+0.7.1 are unchanged.
+
 ## [0.9.0] - 2026-10-14
 
 ### Added
@@ -286,7 +328,8 @@ unchanged.
   a failed login attempt
   ([home-assistant/core#148110](https://github.com/home-assistant/core/issues/148110)).
 
-[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.9.0...v0.10.0
 [0.7.1]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.5.0...v0.6.0

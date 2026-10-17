@@ -9,6 +9,13 @@ proposed for core in home-assistant/architecture#1346:
     endpoint, user_agent, flow_id, count,
     client_id, client_name, token_type   (rejected requests, 0.7.1)
     known_user                           (only when false, 0.9.0)
+    grant_type                           (/auth/token, 0.10.0)
+    ingress, host,
+    x_forwarded_for_untrusted            (every entry, 0.10.0)
+
+`x_forwarded_for_untrusted` is the X-Forwarded-For header as the client sent
+it. Anyone can write anything into it; `ip` is the address Home Assistant
+resolved itself.
 
 `known_user: false` marks a failed login whose username no user has. It is
 only stored while the `store_unknown_usernames` option is on; every other
@@ -70,9 +77,11 @@ def log_type_of(result: str | None) -> str:
 def as_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """A stored history entry as a sign-in log entry.
 
-    Entries stored before 0.7.0 have no user_id or user_agent, and rejected
-    requests stored before 0.7.1 have no reason, client or token type; they
-    come out as None, and the reason as the stored result.
+    Entries stored before 0.7.0 have no user_id or user_agent, rejected
+    requests stored before 0.7.1 have no reason, client or token type, and
+    entries stored before 0.10.0 have no grant type, ingress, host or
+    X-Forwarded-For; they come out as None, and the reason as the stored
+    result.
     """
     result = entry.get("result")
     reason = None if result == RESULT_OK else result
@@ -94,6 +103,10 @@ def as_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
         "client_id": entry.get("client_id"),
         "client_name": entry.get("client_name"),
         "token_type": entry.get("token_type"),
+        "grant_type": entry.get("grant_type"),
+        "ingress": entry.get("ingress"),
+        "host": entry.get("host"),
+        "x_forwarded_for_untrusted": entry.get("x_forwarded_for_untrusted"),
     }
     if entry.get("known_user") is False:
         log_entry["known_user"] = False
