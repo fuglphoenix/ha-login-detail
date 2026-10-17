@@ -16,16 +16,28 @@ const TYPES = {
   "auth.request_rejected": { label: "Rejected", color: "var(--warning-color, #ffa600)" },
 };
 
+// The row only has what tells entries apart; everything else is in the
+// details below it. "wide" columns move into the details on a narrow screen.
 const COLUMNS = [
   ["ts", "Time"],
   ["type", "Type"],
-  ["reason", "Reason"],
-  ["username", "Username"],
+  ["username", "User"],
+  ["ip", "IP address", "wide"],
+  ["summary", "Reason / endpoint", "wide"],
+];
+
+// [key, label, only in the details on a narrow screen]
+const DETAILS = [
+  ["ip", "IP address", true],
+  ["reason", "Reason", true],
+  ["endpoint", "Endpoint", true],
+  ["hostname", "Hostname"],
   ["user_id", "User ID"],
-  ["client", "Client"],
+  ["client_name", "Client"],
+  ["client_id", "Client ID"],
+  ["token_type", "Token type"],
+  ["grant_type", "Grant type"],
   ["auth_provider", "Method"],
-  ["ip", "IP address"],
-  ["endpoint", "Endpoint"],
   ["user_agent", "User agent"],
   ["ingress", "Ingress"],
   ["host", "Host"],
@@ -33,13 +45,15 @@ const COLUMNS = [
   ["flow_id", "Flow ID"],
 ];
 
+const MONO = ["user_id", "flow_id", "ip", "endpoint", "host", "x_forwarded_for_untrusted", "client_id"];
+
 const INGRESS = {
   nabu_casa: "Nabu Casa",
   direct: "direct",
 };
 
 // X-Forwarded-For is whatever the client wrote into the header.
-const UNTRUSTED_HINT = "Client-supplied header - can be forged. The IP address column is what Home Assistant resolved.";
+const UNTRUSTED_HINT = "Client-supplied header - can be forged. The IP address is what Home Assistant resolved.";
 
 const TOKEN_TYPES = {
   normal: "access token",
@@ -93,17 +107,64 @@ const STYLE = `
   }
   button.secondary { background: transparent; color: var(--primary-color); }
   .summary { padding: 10px 16px; font-size: 13px; color: var(--secondary-text-color); display: flex; gap: 16px; flex-wrap: wrap; }
-  .table-wrap { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   th {
     text-align: left; font-weight: 500; color: var(--secondary-text-color);
     padding: 10px 12px; border-bottom: 1px solid var(--divider-color, #e0e0e0); white-space: nowrap;
   }
   td { padding: 9px 12px; border-bottom: 1px solid var(--divider-color, #eee); vertical-align: top; }
-  tr:last-child td { border-bottom: none; }
-  td.mono { font-family: var(--code-font-family, monospace); font-size: 12px; }
-  td.ua { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  tr.entry.open td, tbody tr:last-child td, tbody tr.entry:nth-last-child(2) td { border-bottom: none; }
+  tr.entry { cursor: pointer; }
+  tr.entry:hover td, tr.entry.open td, tr.details td { background: var(--secondary-background-color, #f5f5f5); }
+  .mono { font-family: var(--code-font-family, monospace); font-size: 12px; }
   td.nowrap { white-space: nowrap; }
+  td.user { white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  /* Takes the width that is left; its text is cut there, so the table never
+     gets wider than the card. */
+  td.gist { position: relative; width: 100%; }
+  td.gist > div {
+    position: absolute; left: 12px; right: 12px; top: 9px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  td.gist .mono:not(:first-child) { margin-left: 8px; }
+  td.gist .mono { color: var(--secondary-text-color); }
+  th.toggle, td.toggle { width: 28px; padding-right: 0; }
+  button.expand {
+    background: transparent; color: var(--secondary-text-color); border: none;
+    min-height: 0; padding: 2px; width: 24px; height: 24px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  button.expand:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 1px; }
+  .chevron {
+    width: 7px; height: 7px; border: solid currentColor; border-width: 0 2px 2px 0;
+    transform: rotate(-45deg); transition: transform 0.15s;
+  }
+  button.expand[aria-expanded="true"] .chevron { transform: rotate(45deg); }
+  tr.details td { padding: 0 12px 14px 52px; }
+  dl {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 10px 24px; margin: 0;
+  }
+  dl > div { min-width: 0; }
+  dt { font-size: 12px; color: var(--secondary-text-color); }
+  dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+  .hint { display: block; font-size: 12px; color: var(--secondary-text-color); }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  dl > div.narrow { display: none; }
+  @media (max-width: 600px) {
+    .content { padding: 8px; }
+    .wide { display: none; }
+    dl > div.narrow { display: block; }
+    th, td { padding-left: 6px; padding-right: 6px; }
+    td.nowrap.time { white-space: normal; }
+    td.user { white-space: normal; max-width: none; overflow-wrap: anywhere; }
+    td.user .count { display: block; margin-left: 0; }
+    tr.details td { padding: 0 8px 12px 34px; }
+    dl { grid-template-columns: 1fr; }
+  }
   .badge {
     display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px;
     font-weight: 500; color: white; white-space: nowrap;
@@ -138,6 +199,8 @@ class LoginDetailSignInLog extends HTMLElement {
     this._error = null;
     this._built = false;
     this._timer = null;
+    // Expanded entries, kept across a refresh or a change of filter.
+    this._open = new Set();
   }
 
   set hass(hass) {
@@ -264,46 +327,111 @@ class LoginDetailSignInLog extends HTMLElement {
     });
   }
 
+  _key(entry) {
+    return [entry.ts, entry.type, entry.ip, entry.endpoint, entry.reason, entry.flow_id].join("|");
+  }
+
+  _username(entry) {
+    const shown = text(entry.username);
+    if (shown === null) return [el("span", { class: "muted", text: "—" })];
+    // Stored only with the option store_unknown_usernames: typed by whoever
+    // was at the login form, and no user has it.
+    if (entry.known_user === false) return [shown, el("span", { class: "count", text: "no such user" })];
+    return [shown];
+  }
+
   _cell(key, entry) {
-    // A rejected request's client is only known once its token is proven:
-    // the long-lived token's name, or the client ID (e.g. https://claude.ai).
-    let value = key === "client" ? entry.client_name || entry.client_id : entry[key];
-    if (key === "ingress" && value) value = INGRESS[value] || value;
-    if (key === "ts") return el("td", { class: "nowrap", text: this._formatTime(value) });
+    if (key === "ts") return el("td", { class: "nowrap time", text: this._formatTime(entry.ts) });
     if (key === "type") {
-      const type = TYPES[value] || { label: value, color: "var(--secondary-text-color)" };
+      const type = TYPES[entry.type] || { label: entry.type, color: "var(--secondary-text-color)" };
       const badge = el("span", { class: "badge", text: type.label });
       badge.style.background = type.color;
       const cell = el("td", { class: "nowrap" }, [badge]);
       if (entry.count > 1) cell.append(el("span", { class: "count", text: `×${entry.count}` }));
       return cell;
     }
-    const shown = text(value);
-    const cls = ["user_id", "flow_id", "ip", "endpoint", "host", "x_forwarded_for_untrusted"].includes(key) ? "mono" : key === "user_agent" ? "ua" : "";
-    const cell = el("td", { class: cls });
-    if (shown === null) {
-      cell.append(el("span", { class: "muted", text: "—" }));
-    } else {
-      cell.textContent = key === "user_id" || key === "flow_id" ? shown.slice(0, 8) : shown;
-      cell.title = key === "ip" && entry.hostname ? `${shown} (${entry.hostname})` : shown;
-      if (key === "client" && entry.token_type) {
-        cell.title = `${shown} (${TOKEN_TYPES[entry.token_type] || entry.token_type})`;
-      }
-      if (key === "client" && entry.grant_type) {
-        cell.title = `${shown} (grant type: ${entry.grant_type})`;
-      }
-      if (key === "x_forwarded_for_untrusted") {
-        cell.append(el("span", { class: "count", text: "untrusted" }));
-        cell.title = `${shown} - ${UNTRUSTED_HINT}`;
-      }
-      // Stored only with the option store_unknown_usernames: typed by whoever
-      // was at the login form, and no user has it.
-      if (key === "username" && entry.known_user === false) {
-        cell.append(el("span", { class: "count", text: "no such user" }));
-        cell.title = `${shown} (no such user)`;
-      }
+    if (key === "username") {
+      const cell = el("td", { class: "user" }, this._username(entry));
+      cell.title = cell.textContent;
+      return cell;
     }
+    if (key === "ip") {
+      const shown = text(entry.ip);
+      if (shown === null) return el("td", { class: "wide" }, [el("span", { class: "muted", text: "—" })]);
+      const cell = el("td", { class: "wide nowrap mono", text: shown });
+      if (entry.hostname) cell.title = `${shown} (${entry.hostname})`;
+      return cell;
+    }
+    // key === "summary": the reason and the endpoint, cut to the space left.
+    const reason = text(entry.reason);
+    const endpoint = text(entry.endpoint);
+    const clip = el("div");
+    if (reason === null && endpoint === null) clip.append(el("span", { class: "muted", text: "—" }));
+    if (reason !== null) clip.append(el("span", { text: reason }));
+    if (endpoint !== null) clip.append(el("span", { class: "mono", text: endpoint }));
+    const cell = el("td", { class: "wide gist" }, [clip]);
+    cell.title = [reason, endpoint].filter((part) => part !== null).join(" ");
     return cell;
+  }
+
+  _detail(key, entry) {
+    // Empty fields are left out.
+    const shown = text(entry[key]);
+    if (shown === null) return null;
+    if (MONO.includes(key) && key !== "x_forwarded_for_untrusted") return [el("span", { class: "mono", text: shown })];
+    if (key === "token_type") return [TOKEN_TYPES[shown] || shown];
+    if (key === "ingress") return [INGRESS[shown] || shown];
+    if (key === "x_forwarded_for_untrusted") {
+      return [el("span", { class: "mono", text: shown }), el("span", { class: "hint", text: UNTRUSTED_HINT })];
+    }
+    return [shown];
+  }
+
+  _details(entry) {
+    const fields = [];
+    for (const [key, label, narrowOnly] of DETAILS) {
+      const value = this._detail(key, entry);
+      if (value === null) continue;
+      fields.push(
+        el("div", { class: narrowOnly ? "narrow" : "" }, [
+          el("dt", { text: label }),
+          el("dd", {}, value),
+        ])
+      );
+    }
+    return fields;
+  }
+
+  _row(entry, index) {
+    const key = this._key(entry);
+    const id = `details-${index}`;
+    const open = this._open.has(key);
+    const button = el("button", {
+      class: "expand",
+      type: "button",
+      "aria-expanded": String(open),
+      "aria-controls": id,
+      "aria-label": "Details",
+    }, [el("span", { class: "chevron" })]);
+    const row = el("tr", { class: open ? "entry open" : "entry" }, [
+      el("td", { class: "toggle" }, [button]),
+      ...COLUMNS.map(([column]) => this._cell(column, entry)),
+    ]);
+    const details = el("tr", { class: "details", id }, [
+      el("td", { colspan: String(COLUMNS.length + 1) }, [el("dl", {}, this._details(entry))]),
+    ]);
+    details.hidden = !open;
+    // The whole row toggles; the button is what a keyboard or screen reader
+    // uses, and its click lands here too.
+    row.addEventListener("click", () => {
+      const nowOpen = details.hidden;
+      details.hidden = !nowOpen;
+      button.setAttribute("aria-expanded", String(nowOpen));
+      row.classList.toggle("open", nowOpen);
+      if (nowOpen) this._open.add(key);
+      else this._open.delete(key);
+    });
+    return [row, details];
   }
 
   _render() {
@@ -321,15 +449,12 @@ class LoginDetailSignInLog extends HTMLElement {
       this._body.replaceChildren(el("div", { class: "empty", text: "No entries match the filters." }));
       return;
     }
-    const head = el("tr", {}, COLUMNS.map(([key, label]) => {
-      const th = el("th", { text: label });
-      if (key === "x_forwarded_for_untrusted") th.title = UNTRUSTED_HINT;
-      return th;
-    }));
-    const rows = entries.map((entry) => el("tr", {}, COLUMNS.map(([key]) => this._cell(key, entry))));
-    this._body.replaceChildren(
-      el("div", { class: "table-wrap" }, [el("table", {}, [el("thead", {}, [head]), el("tbody", {}, rows)])])
-    );
+    const head = el("tr", {}, [
+      el("th", { class: "toggle" }, [el("span", { class: "sr-only", text: "Details" })]),
+      ...COLUMNS.map(([, label, wide]) => el("th", { class: wide ? "wide" : "", text: label })),
+    ]);
+    const rows = entries.flatMap((entry, index) => this._row(entry, index));
+    this._body.replaceChildren(el("table", {}, [el("thead", {}, [head]), el("tbody", {}, rows)]));
   }
 }
 

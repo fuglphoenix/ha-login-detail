@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-10-17
+
+### Changed
+- **The Sign-in log panel no longer scrolls sideways.** A row now shows
+  time, type, user, IP address and the reason with its endpoint; the reason
+  is cut to the width that is left. Everything else - hostname, user ID,
+  client, client ID, token type, grant type, method, user agent, ingress,
+  host, X-Forwarded-For (untrusted) and flow ID - is shown when the row is
+  expanded, by a click on the row or with the keyboard on its button
+  (`aria-expanded`). Empty fields are left out. On a screen up to 600 px
+  wide, the IP address, reason and endpoint move into the expanded row too.
+  An expanded row stays open across a refresh or a change of filter.
+- The client ID and the grant type, before only on hover, and the full
+  user agent, user ID and flow ID are now readable in the expanded row.
+- A new screenshot in the README, with test data and one row expanded.
+
+Display only: no stored data, event, websocket field or filter changed.
+
 ## [0.10.0] - 2026-10-17
 
 ### Added
@@ -330,7 +348,8 @@ unchanged.
   a failed login attempt
   ([home-assistant/core#148110](https://github.com/home-assistant/core/issues/148110)).
 
-[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.9.0...v0.10.0
 [0.7.1]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.6.0...v0.7.0
