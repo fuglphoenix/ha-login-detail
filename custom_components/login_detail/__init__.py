@@ -7,9 +7,11 @@ The former is a known, open gap in core: home-assistant/core#148110.
 This integration monkeypatches the login flow and fires two events:
 
   login_detail_failed      username, user_id, ip_address, reason, flow_id,
-                           auth_provider, endpoint, user_agent
+                           auth_provider, endpoint, user_agent, ingress, host,
+                           x_forwarded_for_untrusted
   login_detail_succeeded   username, user_id, ip_address, flow_id,
-                           auth_provider, endpoint, user_agent
+                           auth_provider, endpoint, user_agent, ingress, host,
+                           x_forwarded_for_untrusted
 
 It also wraps core's `process_wrong_login`, which handles every request that
 is rejected for invalid authentication - a wrong or expired token on
@@ -18,12 +20,21 @@ carry no username, so they get their own event:
 
   login_detail_request_rejected   ip_address, endpoint, reason, rejection,
                                   user_id, username, client_id, client_name,
-                                  token_type, user_agent
+                                  token_type, grant_type, user_agent, ingress,
+                                  host, x_forwarded_for_untrusted
 
 `reason` is always `invalid_request_auth`; `rejection` says why (0.7.1,
 see rejection.py). The user and client are only filled in when the token
 behind the request has been proven to be theirs - the token itself is never
-kept.
+kept. On /auth/token, `grant_type` and the requested `client_id` are read
+from the form core has already parsed (0.10.0).
+
+How the request came in (0.10.0): `ingress` is `nabu_casa` for a request
+through Home Assistant Cloud remote access and `direct` otherwise, `host` is
+the Host header, and `x_forwarded_for_untrusted` is the raw X-Forwarded-For
+header as the client sent it. The client can write anything into that
+header - it is named untrusted wherever it is shown, and `ip_address` stays
+the address Home Assistant itself resolved.
 
 Every event is also written as one line to the log - failed login attempts at
 WARNING, everything else at INFO - stored in `.storage/login_detail_history`
@@ -83,7 +94,10 @@ Written against Home Assistant 2026.10.1. The monkeypatch targets private API
 `homeassistant.components.http.ban` and
 `homeassistant.components.websocket_api.auth`) and may stop working with any
 core upgrade. If patching fails, it is logged at startup and login continues
-unchanged.
+unchanged. The token format and the /auth/token flow the rejection details
+rely on are checked at startup (rejection.async_self_check); a feature whose
+core API has changed is switched off with a WARNING instead of failing
+silently.
 """
 
 from __future__ import annotations
@@ -108,6 +122,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.http import current_request
+from homeassistant.helpers.network import is_cloud_connection
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
@@ -124,9 +139,12 @@ from .const import (
     DEFAULT_STORE_UNKNOWN_USERNAMES,
     DOMAIN,
     ENDPOINT_LOGIN_FLOW,
+    ENDPOINT_TOKEN,
     EVENT_LOGIN_FAILED,
     EVENT_LOGIN_SUCCEEDED,
     EVENT_REQUEST_REJECTED,
+    INGRESS_DIRECT,
+    INGRESS_NABU_CASA,
     PANEL_COMPONENT,
     PANEL_ICON,
     PANEL_STATIC_URL,
@@ -141,7 +159,14 @@ from .const import (
     UNKNOWN_USERNAME_MAX_LENGTH,
     USER_AGENT_MAX_LENGTH,
 )
-from .rejection import ATTRIBUTION_FIELDS, classify, websocket_token
+from .rejection import (
+    ATTRIBUTION_FIELDS,
+    async_self_check,
+    classify,
+    clean,
+    token_form,
+    websocket_token,
+)
 from .websocket import async_register_websocket_commands, log_type_of
 
 _LOGGER = logging.getLogger(__name__)
@@ -285,6 +310,8 @@ class LoginDetailData:
             # The newest user agent wins - a fold is one IP on one endpoint
             # for one reason and one client, so it is usually the same anyway.
             previous["user_agent"] = entry.get("user_agent")
+            for key in INGRESS_FIELDS:
+                previous[key] = entry.get(key)
             self.history.insert(0, previous)
             self._async_save()
             async_dispatcher_send(self.hass, SIGNAL_UPDATED)
@@ -337,6 +364,9 @@ class LoginDetailData:
 # What must match for a rejected request to be folded into an earlier one.
 _FOLD_KEYS = ("ip_address", "endpoint", "reason", "user_id", "client_id")
 
+# How a request came in (0.10.0), on every event and entry.
+INGRESS_FIELDS = ("ingress", "host", "x_forwarded_for_untrusted")
+
 
 def _report(
     hass: HomeAssistant,
@@ -355,6 +385,7 @@ def _report(
     `store_unknown_usernames` option is on. Only then is the key added, so
     with the option off every event and entry looks exactly as before.
     """
+    request = current_request.get()
     data = {
         "username": username,
         "user_id": user_id,
@@ -363,7 +394,8 @@ def _report(
         "flow_id": flow_id,
         "auth_provider": _provider_of(flow),
         "endpoint": ENDPOINT_LOGIN_FLOW,
-        "user_agent": _user_agent_of(current_request.get()),
+        "user_agent": _user_agent_of(request),
+        **_ingress_of(hass, request),
     }
     if not known_user:
         data["known_user"] = False
@@ -390,6 +422,7 @@ def _report(
         "flow_id": flow_id,
         "endpoint": ENDPOINT_LOGIN_FLOW,
         "user_agent": data["user_agent"],
+        **{key: data[key] for key in INGRESS_FIELDS},
     }
     if not known_user:
         entry["known_user"] = False
@@ -416,8 +449,9 @@ def _log_line(result: str, data: dict[str, Any]) -> None:
     _LOGGER.log(
         level,
         "Sign-in log: type=%s reason=%s username=%s user_id=%s auth_provider=%s "
-        "client_id=%s token_type=%s client_name=%r ip=%s endpoint=%s "
-        "user_agent=%r flow_id=%s" + (" known_user=False" if unknown else ""),
+        "client_id=%s token_type=%s client_name=%r grant_type=%s ip=%s "
+        "endpoint=%s user_agent=%r flow_id=%s ingress=%s host=%r "
+        "x_forwarded_for_untrusted=%r" + (" known_user=False" if unknown else ""),
         log_type_of(result),
         None if result == RESULT_OK else data.get("rejection") or result,
         repr(data.get("username")) if unknown else data.get("username"),
@@ -426,26 +460,38 @@ def _log_line(result: str, data: dict[str, Any]) -> None:
         data.get("client_id"),
         data.get("token_type"),
         data.get("client_name"),
+        data.get("grant_type"),
         data.get("ip_address"),
         data.get("endpoint"),
         data.get("user_agent"),
         data.get("flow_id"),
+        data.get("ingress"),
+        data.get("host"),
+        data.get("x_forwarded_for_untrusted"),
     )
 
 
-def _report_rejected(
+async def _async_report_rejected(
     hass: HomeAssistant, request: Any, *, websocket: bool = False
 ) -> None:
-    """Log, fire and store one rejected request. Must never raise."""
+    """Log, fire and store one rejected request. Must never raise.
+
+    The form of a /auth/token request is only held here, in memory, for the
+    duration of the call - see rejection.token_form.
+    """
     endpoint = _endpoint_of(request)
-    found = classify(hass, request, endpoint, websocket=websocket)
+    form = await token_form(request) if endpoint == ENDPOINT_TOKEN else None
+    found = classify(hass, request, endpoint, websocket=websocket, form=form)
+    del form
     data = {
         "ip_address": str(request.remote) if request.remote is not None else None,
         "endpoint": endpoint,
         "reason": RESULT_REQUEST_REJECTED,
         "rejection": found["reason"],
         **{key: found[key] for key in ATTRIBUTION_FIELDS},
+        "grant_type": found["grant_type"],
         "user_agent": _user_agent_of(request),
+        **_ingress_of(hass, request),
     }
     _log_line(RESULT_REQUEST_REJECTED, data)
     hass.bus.async_fire(EVENT_REQUEST_REJECTED, data)
@@ -463,11 +509,13 @@ def _report_rejected(
             "client_id": data["client_id"],
             "client_name": data["client_name"],
             "token_type": data["token_type"],
+            "grant_type": data["grant_type"],
             "ip_address": data["ip_address"],
             "auth_provider": None,
             "flow_id": None,
             "endpoint": data["endpoint"],
             "user_agent": data["user_agent"],
+            **{key: data[key] for key in INGRESS_FIELDS},
         }
     )
 
@@ -505,6 +553,35 @@ def _user_agent_of(request: Any) -> str | None:
     except Exception:  # noqa: BLE001 - not an aiohttp request
         return None
     return user_agent[:USER_AGENT_MAX_LENGTH] if user_agent else None
+
+
+def _ingress_of(hass: HomeAssistant, request: Any) -> dict[str, str | None]:
+    """How the request reached Home Assistant - all None without a request.
+
+    `ingress` comes from Home Assistant Cloud itself (core's
+    is_cloud_connection), so it can be trusted. Host and X-Forwarded-For are
+    headers as the client sent them, before core's forwarded middleware has
+    looked at them - X-Forwarded-For is typed by whoever sent the request,
+    which is why the field carries "untrusted" in its name.
+    """
+    found: dict[str, str | None] = dict.fromkeys(INGRESS_FIELDS)
+    if request is None:
+        return found
+    try:
+        found["ingress"] = (
+            INGRESS_NABU_CASA if is_cloud_connection(hass) else INGRESS_DIRECT
+        )
+    except Exception:  # noqa: BLE001 - cloud internals; leave it unknown
+        found["ingress"] = None
+    try:
+        headers = request.headers
+        found["host"] = clean(headers.get("Host"))
+        found["x_forwarded_for_untrusted"] = clean(
+            ", ".join(headers.getall("X-Forwarded-For", []))
+        )
+    except Exception:  # noqa: BLE001 - not an aiohttp request
+        pass
+    return found
 
 
 def _provider_of(flow: Any) -> str | None:
@@ -767,14 +844,14 @@ class _CorePatch:
         async def process_wrong_login(request: Any) -> None:
             await original_wrong_login(request)
             try:
-                _report_rejected(hass, request)
+                await _async_report_rejected(hass, request)
             except Exception:  # must never break request handling
                 _LOGGER.exception("login_detail: could not report rejected request")
 
         async def ws_process_wrong_login(request: Any) -> None:
             await original_ws_wrong_login(request)
             try:
-                _report_rejected(hass, request, websocket=True)
+                await _async_report_rejected(hass, request, websocket=True)
             except Exception:  # must never break request handling
                 _LOGGER.exception("login_detail: could not report rejected request")
 
@@ -870,6 +947,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await data.async_load()
     hass.data[DOMAIN] = data
 
+    await _async_self_check(hass)
     _PATCH.apply(hass)
 
     entry.async_on_unload(
@@ -880,6 +958,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
+
+
+async def _async_self_check(hass: HomeAssistant) -> None:
+    """Check the private core API of the rejection details, and say so.
+
+    One INFO line when all is well - the post-upgrade check looks for it -
+    and a WARNING per feature that had to be switched off.
+    """
+    try:
+        found = await async_self_check(hass)
+    except Exception:  # must never block setup
+        _LOGGER.exception("login_detail: the self-check failed")
+        return
+    fallback = {
+        "token_identification": (
+            "rejected tokens are reported without a reason or user, as before 0.7.1"
+        ),
+        "token_endpoint": (
+            "rejections on /auth/token are reported as invalid_auth_request, "
+            "as before 0.10.0"
+        ),
+    }
+    for feature, ok in found.items():
+        if not ok:
+            _LOGGER.warning(
+                "login_detail self-check: %s does not match this Home Assistant "
+                "version and is switched off - %s. Please open an issue with "
+                "your Home Assistant version",
+                feature,
+                fallback.get(feature, "it is not reported"),
+            )
+    if all(found.values()):
+        _LOGGER.info(
+            "login_detail self-check passed: %s",
+            ", ".join(sorted(found)),
+        )
 
 
 async def _async_register_panel(hass: HomeAssistant) -> None:

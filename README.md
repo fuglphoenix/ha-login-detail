@@ -27,7 +27,9 @@ forwarded, and tokens are never stored.
 > time. After a Home Assistant upgrade the integration may silently stop
 > reporting - no error, nothing breaks, logins keep working, you just stop
 > getting events. All patched code is wrapped so that a failure can never
-> break a login. Do the
+> break a login. The rejection details also rely on core's token format and
+> its `/auth/token` view; a startup self-check switches them off with a
+> warning if those change. Do the
 > [post-upgrade check](docs/upgrading.md#after-a-home-assistant-upgrade) after
 > every upgrade.
 
@@ -99,7 +101,8 @@ Six sensors, created automatically - no YAML, no helpers. Attributes in
 
 An admin-only panel, **Sign-in log**, in the sidebar shows every recorded
 event as one row, newest first: time, type, reason, username, user ID, login
-method, client, IP address, endpoint, user agent and flow ID. Repeated
+method, client, IP address, endpoint, user agent, ingress (Nabu Casa or
+direct), Host, X-Forwarded-For (marked untrusted) and flow ID. Repeated
 rejections from the same IP address on the same endpoint, for the same
 reason, user and client, are one row with a count. The
 table can be filtered by type, user, IP address (prefix, so `192.0.2.`
@@ -168,10 +171,13 @@ alice from 203.0.113.7 (invalid_mfa_code)
 
 ## Privacy
 
-This integration stores usernames, user IDs, IP addresses and user agents in
-plain text - in the events, the log, `.storage/login_detail_history`, the
-sensor attributes and therefore the recorder database and backups - and looks
-up every IP address with reverse DNS. With the option **Also store usernames
+This integration stores usernames, user IDs, IP addresses, user agents, the
+names of long-lived tokens and OAuth client IDs, and - since 0.10.0 - the
+`Host` header and the raw `X-Forwarded-For` header in plain text - in the
+events, the log, `.storage/login_detail_history` and, partly, the sensor
+attributes and therefore the recorder database and backups - and looks up
+every IP address with reverse DNS. `X-Forwarded-For` is set by the client
+and cannot be trusted. With the option **Also store usernames
 that do not exist**, that includes whatever was typed into the username
 field, possibly a password. If you run Home Assistant for other
 people, tell them. Details in [Privacy](docs/privacy.md).

@@ -27,8 +27,19 @@ const COLUMNS = [
   ["ip", "IP address"],
   ["endpoint", "Endpoint"],
   ["user_agent", "User agent"],
+  ["ingress", "Ingress"],
+  ["host", "Host"],
+  ["x_forwarded_for_untrusted", "X-Forwarded-For (untrusted)"],
   ["flow_id", "Flow ID"],
 ];
+
+const INGRESS = {
+  nabu_casa: "Nabu Casa",
+  direct: "direct",
+};
+
+// X-Forwarded-For is whatever the client wrote into the header.
+const UNTRUSTED_HINT = "Client-supplied header - can be forged. The IP address column is what Home Assistant resolved.";
 
 const TOKEN_TYPES = {
   normal: "access token",
@@ -256,7 +267,8 @@ class LoginDetailSignInLog extends HTMLElement {
   _cell(key, entry) {
     // A rejected request's client is only known once its token is proven:
     // the long-lived token's name, or the client ID (e.g. https://claude.ai).
-    const value = key === "client" ? entry.client_name || entry.client_id : entry[key];
+    let value = key === "client" ? entry.client_name || entry.client_id : entry[key];
+    if (key === "ingress" && value) value = INGRESS[value] || value;
     if (key === "ts") return el("td", { class: "nowrap", text: this._formatTime(value) });
     if (key === "type") {
       const type = TYPES[value] || { label: value, color: "var(--secondary-text-color)" };
@@ -267,7 +279,7 @@ class LoginDetailSignInLog extends HTMLElement {
       return cell;
     }
     const shown = text(value);
-    const cls = ["user_id", "flow_id", "ip", "endpoint"].includes(key) ? "mono" : key === "user_agent" ? "ua" : "";
+    const cls = ["user_id", "flow_id", "ip", "endpoint", "host", "x_forwarded_for_untrusted"].includes(key) ? "mono" : key === "user_agent" ? "ua" : "";
     const cell = el("td", { class: cls });
     if (shown === null) {
       cell.append(el("span", { class: "muted", text: "—" }));
@@ -276,6 +288,13 @@ class LoginDetailSignInLog extends HTMLElement {
       cell.title = key === "ip" && entry.hostname ? `${shown} (${entry.hostname})` : shown;
       if (key === "client" && entry.token_type) {
         cell.title = `${shown} (${TOKEN_TYPES[entry.token_type] || entry.token_type})`;
+      }
+      if (key === "client" && entry.grant_type) {
+        cell.title = `${shown} (grant type: ${entry.grant_type})`;
+      }
+      if (key === "x_forwarded_for_untrusted") {
+        cell.append(el("span", { class: "count", text: "untrusted" }));
+        cell.title = `${shown} - ${UNTRUSTED_HINT}`;
       }
       // Stored only with the option store_unknown_usernames: typed by whoever
       // was at the login form, and no user has it.
@@ -302,7 +321,11 @@ class LoginDetailSignInLog extends HTMLElement {
       this._body.replaceChildren(el("div", { class: "empty", text: "No entries match the filters." }));
       return;
     }
-    const head = el("tr", {}, COLUMNS.map(([, label]) => el("th", { text: label })));
+    const head = el("tr", {}, COLUMNS.map(([key, label]) => {
+      const th = el("th", { text: label });
+      if (key === "x_forwarded_for_untrusted") th.title = UNTRUSTED_HINT;
+      return th;
+    }));
     const rows = entries.map((entry) => el("tr", {}, COLUMNS.map(([key]) => this._cell(key, entry))));
     this._body.replaceChildren(
       el("div", { class: "table-wrap" }, [el("table", {}, [el("thead", {}, [head]), el("tbody", {}, rows)])])

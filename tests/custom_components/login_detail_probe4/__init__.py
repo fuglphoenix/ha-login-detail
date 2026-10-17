@@ -1,5 +1,10 @@
 """Acceptance test probe D - why a request was rejected, and by whom (0.7.1).
 
+Updated for 0.10.0: a bearer value that is not a JWT is now
+malformed_credentials (D10), and a rejected refresh grant on /auth/token
+says why, with its grant type and client ID (D18). Probe F covers the rest
+of 0.10.0.
+
 Like the other probes this is NOT part of login_detail and is never installed
 on a real instance. It sets the integration and the MCP server ("require
 admin", the default) up from the UI, sends rejected requests over real HTTP
@@ -361,7 +366,6 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
             (7, "Probe/unsigned", "unsigned token (alg none) naming a real user"),
             (8, "Probe/unknown-issuer", "token naming a refresh token that never was"),
             (9, "Probe/revoked", "token of a revoked refresh token"),
-            (10, "Probe/garbage", "a bearer value that is not a JWT"),
             (11, "Probe/leaver", "token of a user deactivated since"),
         ):
             event = _event(agent)
@@ -372,6 +376,15 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
                 and _anonymous(event),
                 event,
             )
+        event = _event("Probe/garbage")
+        report.check(
+            "D10. a bearer value that is not a JWT: malformed_credentials "
+            "(0.10.0), nobody named",
+            event is not None
+            and event["rejection"] == "malformed_credentials"
+            and _anonymous(event),
+            event,
+        )
         event = _event("Probe/homebody")
         report.check(
             "D12. valid token of a local-only user from outside: user_not_allowed "
@@ -474,12 +487,16 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
         await hass.async_block_till_done()
         event = _event("Probe/token-grant")
         report.check(
-            "D18. rejected refresh grant on /auth/token: invalid_auth_request",
+            "D18. rejected refresh grant on /auth/token: unknown_or_revoked_token "
+            "with grant type and the requested client ID (0.10.0)",
             grant_status == 400
             and event is not None
-            and event["rejection"] == "invalid_auth_request"
+            and event["rejection"] == "unknown_or_revoked_token"
             and event["endpoint"] == "/auth/token"
-            and _anonymous(event),
+            and event["grant_type"] == "refresh_token"
+            and event["client_id"] == CLIENT_ID
+            and event["user_id"] is None
+            and event["token_type"] is None,
             [grant_status, event],
         )
         event = _event("Probe/signed-path")
@@ -511,9 +528,10 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
                     # The admin's normal and long-lived token: two clients.
                     ("expired_token", admin.id, 1),
                     ("expired_token", admin.id, 1),
-                    ("unknown_or_revoked_token", "", 6),
+                    ("unknown_or_revoked_token", "", 5),
                     ("user_not_allowed", homebody.id, 1),
-                    ("malformed_credentials", "", 1),
+                    # Basic auth and the bearer value that is not a JWT.
+                    ("malformed_credentials", "", 2),
                     ("not_admin", member.id, 1),
                 ]
             ),

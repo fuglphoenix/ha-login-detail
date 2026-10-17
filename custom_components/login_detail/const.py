@@ -53,6 +53,30 @@ REJECTED_NOT_ADMIN = "not_admin"  # *
 REJECTED_PERMISSION_DENIED = "permission_denied"  # *
 REJECTED_INVALID_AUTH_REQUEST = "invalid_auth_request"
 
+# Why /auth/token turned a grant down (0.10.0), from the form fields core has
+# already read. `unknown_or_revoked_token` and `user_not_allowed` above are
+# used for the refresh token grant too.
+REJECTED_INVALID_CLIENT_ID = "invalid_client_id"
+REJECTED_CLIENT_ID_MISMATCH = "client_id_mismatch"  # *
+REJECTED_INVALID_AUTHORIZATION_CODE = "invalid_authorization_code"
+REJECTED_UNSUPPORTED_GRANT_TYPE = "unsupported_grant_type"
+
+ENDPOINT_TOKEN = "/auth/token"
+
+# The grant types /auth/token knows. Anything else the client sends is
+# reported as "other", not as typed.
+GRANT_TYPES = ("authorization_code", "refresh_token")
+GRANT_TYPE_OTHER = "other"
+
+# How the request reached Home Assistant (0.10.0).
+INGRESS_NABU_CASA = "nabu_casa"
+INGRESS_DIRECT = "direct"
+
+# Host, X-Forwarded-For and the client ID are set by the client. They are
+# cut, and control characters are replaced, so a client cannot fill the log
+# or break a log line.
+HEADER_MAX_LENGTH = 200
+
 # The endpoint every login flow entry is reported on.
 ENDPOINT_LOGIN_FLOW = "/auth/login_flow"
 
