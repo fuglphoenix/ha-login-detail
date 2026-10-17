@@ -7,7 +7,7 @@ login attempt - and when, and from which IP address.
 [![Validate](https://github.com/fuglphoenix/ha-login-detail/actions/workflows/validate.yml/badge.svg)](https://github.com/fuglphoenix/ha-login-detail/actions/workflows/validate.yml)
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)
 
-![The Sign-in log panel with successful logins, failed logins and rejected requests (test data)](docs/images/sign-in-log.png)
+![The Sign-in log panel with successful logins, failed logins and rejected requests, one of them expanded to show its details (test data)](docs/images/sign-in-log.png)
 
 When a login fails, Home Assistant logs the IP address and the URL - never the
 username that was tried. A successful login is not logged at all. The first
