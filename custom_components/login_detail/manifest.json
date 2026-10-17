@@ -1,7 +1,7 @@
 {
   "domain": "login_detail",
   "name": "Login Detail",
-  "after_dependencies": ["recorder"],
+  "after_dependencies": ["auth", "recorder"],
   "codeowners": ["@fuglphoenix"],
   "config_flow": true,
   "dependencies": ["http", "panel_custom", "websocket_api"],

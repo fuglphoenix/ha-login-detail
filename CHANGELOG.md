@@ -44,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `x_forwarded_for_untrusted`.
 - A folded rejection keeps the newest `ingress`, `host` and
   `x_forwarded_for_untrusted`, like the user agent.
+- `auth` is in `after_dependencies`, since the `/auth/token` details import
+  from it.
 
 No events, event fields, entity IDs, unique IDs or attribute keys were
 removed or renamed. `user_agent` (0.7.0) and the token identification of
