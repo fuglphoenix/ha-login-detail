@@ -85,6 +85,11 @@ automations - fields in [Events](docs/events.md):
   `/api/mcp`. Rejections on REST views need `ip_ban_enabled`, see
   [Known limitations](docs/known-limitations.md).
 
+With IP banning on, the attempt that got an IP address banned fires
+`login_detail_request_rejected` with `reason: ip_banned_now`, and the IP
+address sensor shows `banned: true/false` per address - see
+[IP bans](docs/events.md#ip-bans-0110).
+
 Six sensors, created automatically - no YAML, no helpers. Attributes in
 [Entities](docs/entities.md):
 
@@ -93,7 +98,7 @@ Six sensors, created automatically - no YAML, no helpers. Attributes in
 | `sensor.login_latest_event` | `sensor.login_seneste_haendelse` | Latest login event |
 | `sensor.login_ok_24h` | `sensor.login_ok_24t` | Successful logins, last 24 hours |
 | `sensor.login_failed_24h` | `sensor.login_mislykkede_24t` | Failed logins and rejected requests, last 24 hours |
-| `sensor.login_ip_addresses_24h` | `sensor.login_ip_adresser_24t` | Unique IP addresses, last 24 hours |
+| `sensor.login_ip_addresses_24h` | `sensor.login_ip_adresser_24t` | Unique IP addresses, last 24 hours, and whether each is banned |
 | `sensor.login_history` | `sensor.login_historik` | Stored events |
 | `sensor.login_active_sessions` | `sensor.login_aktive_sessioner` | Active refresh tokens per user |
 

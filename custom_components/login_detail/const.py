@@ -61,6 +61,11 @@ REJECTED_CLIENT_ID_MISMATCH = "client_id_mismatch"  # *
 REJECTED_INVALID_AUTHORIZATION_CODE = "invalid_authorization_code"
 REJECTED_UNSUPPORTED_GRANT_TYPE = "unsupported_grant_type"
 
+# The request that got core to ban the IP address - the attempt that reached
+# login_attempts_threshold (0.11.0). `reason` of the event, and a flag
+# (`ip_banned_now: true`) on the history entry, which is never folded.
+RESULT_IP_BANNED_NOW = "ip_banned_now"
+
 ENDPOINT_TOKEN = "/auth/token"
 
 # The grant types /auth/token knows. Anything else the client sends is

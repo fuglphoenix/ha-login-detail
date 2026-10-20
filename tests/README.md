@@ -1,10 +1,11 @@
 # Testing login_detail
 
-There are two levels of tests.
+There are three levels of tests.
 
 | Level | What | Where it runs |
 |---|---|---|
 | Static checks | Manifest, `hacs.json`, translation parity, syntax, no Danish text outside `translations/da.json` | `pytest` - anywhere, also in CI |
+| Unit tests | IP ban detail (`ip_banned_now`, `banned` per IP) against core's real `ban.py` | `pytest` with Home Assistant installed; skipped otherwise |
 | Acceptance test | The whole login path against a real Home Assistant, including 2FA | Inside a Home Assistant container, by hand |
 
 The static checks cannot tell you whether the monkeypatch still works. Only
@@ -18,6 +19,23 @@ pytest
 ruff check custom_components tools tests
 ruff format --check custom_components tools tests
 ```
+
+## Unit tests
+
+`tests/test_ban.py` runs core's real `process_wrong_login` and `setup_bans`
+on a bare aiohttp app with the patch applied - from ban.py, the websocket and
+login_flow.py. It needs `pytest-homeassistant-custom-component` pinned to the
+Home Assistant version you test against (0.13.372 is Home Assistant
+2026.10.1), on Python 3.14:
+
+```sh
+pip install pytest-homeassistant-custom-component==0.13.372 ruff
+pytest
+```
+
+Expected result for 0.11.0 on Home Assistant 2026.10.1: **25 passed**.
+Without the plugin the module is skipped, and pytest warns that
+`asyncio_mode` is an unknown option.
 
 ## Acceptance test
 
@@ -35,11 +53,12 @@ it. Real bootstrap, real config entry machinery, real entity registry, real
 | `login_detail_probe3` | The sign-in log (0.7.0) over real HTTP and websocket: `user_id`, `user_agent`, the username guard, one log line per event, the websocket command and its filters, **refusal for non-admin users**, the panel, retention and the options. |
 | `login_detail_probe4` | Rejected requests (0.7.1) on `/api/mcp` (MCP server, "require admin"), the websocket, `/auth/token` and a signed path: every `rejection` type, the user and client of an expired normal and long-lived token, **forged, unsigned, unknown and revoked tokens naming nobody**, a local-only user from outside, `not_admin`, folding, the `reason` filter, **no token or part of one anywhere** (history, storage file, events, websocket, the whole log), the IP ban counter, and that a call without a token can get the IP banned. |
 | `login_detail_probe6` | `/auth/token` details and ingress (0.10.0) over real HTTP and websocket: a revoked refresh token, a real one with the wrong client ID, a local-only user from outside, an invalid client ID, no refresh token, a made-up authorization code and an unknown grant type; an expired long-lived token on the websocket; tokens of a deleted refresh token and a deleted user; a random bearer value without an exception; Host and the raw X-Forwarded-For chain through a proxy, marked untrusted, also on a failed login; the websocket command, the log line and the panel; **the self-check and its fallback**; and **no token, refresh token, code or password anywhere**. With `LOGIN_DETAIL_PROBE_SECRETS` set it writes every secret to that file, so the log and config directory can be searched with `grep -rF -f`. |
+| `login_detail_probe7` | IP bans (0.11.0) over real HTTP, each from its own address through the trusted proxy: a rejected REST call and a wrong password below the threshold (plain, and the wrong password reported once), and at threshold - 1 (`ip_banned_now` with `attempts` and `threshold` on the event, one marked history entry, a WARNING line, 403 afterwards); `banned` per IP on the sensor; the history attribute, the websocket, the storage file and the panel; and that unloading the entry restores core's `process_wrong_login` in login_flow.py. |
 | `login_detail_probe5` | The option `store_unknown_usernames` (0.9.0) over real HTTP: **off by default, and off means an unknown name is `null` everywhere, as before**; on: the name as typed with `known_user: false` in the history, event, log line, both 24h sensors, the websocket and the storage file, a known user unchanged, a long name cut to 64 characters with its line break replaced; off again. All switching is done through **Configure** (the options flow) on a loaded entry, and must take effect by a reload of the entry, without a restart. Run on a config with an entry from before 0.9.0 (E'), it also checks that the missing key reads as off and that turning it on keeps the other options. |
 
 The probes write their result to `report.json` / `report2.json` /
-`report3.json` / `report4.json` / `report5.json` / `report6.json` in the config
-directory.
+`report3.json` / `report4.json` / `report5.json` / `report6.json` /
+`report7.json` in the config directory.
 
 ### How to run it
 
@@ -53,6 +72,7 @@ cp -a tests/custom_components/login_detail_probe3 /usr/src/login_detail_test/cus
 cp -a tests/custom_components/login_detail_probe4 /usr/src/login_detail_test/custom_components/
 cp -a tests/custom_components/login_detail_probe5 /usr/src/login_detail_test/custom_components/
 cp -a tests/custom_components/login_detail_probe6 /usr/src/login_detail_test/custom_components/
+cp -a tests/custom_components/login_detail_probe7 /usr/src/login_detail_test/custom_components/
 cp tests/configuration.yaml /usr/src/login_detail_test/configuration.yaml
 
 # 2. .storage/http MUST be seeded with a port other than your instance's,
@@ -117,6 +137,10 @@ grep -rlF -f /tmp/probe6-secrets.txt home-assistant.log events6.json \
 still alive, as it does for every session; the probe writes those to
 `/tmp/probe6-secrets.txt.core_owned`, and they are the only hits there.
 
+**Run G in a fresh directory:** like run D - only `login_detail_probe7:` in
+`configuration.yaml`, with the same `http` block. It bans 203.0.113.10 and
+203.0.113.20 in the throwaway config on purpose.
+
 **Run E in a fresh directory:** like run C, with only
 `login_detail_probe5:` in `configuration.yaml`, and `http` on port 18123
 with `ip_ban_enabled: false`.
@@ -128,8 +152,8 @@ options with `max_entries`, `max_days` and `show_panel`, **without**
 one. Seed only that file: a copy of a whole config directory from another
 run fails, because the probe creates its test users again.
 
-Expected result for 0.10.0 on Home Assistant 2026.10.1: **A: 35/35, B: 9/9,
-C: 25/25, D: 25/25, E: 15/15, E': 16/16, F: 19/19.**
+Expected result for 0.11.0 on Home Assistant 2026.10.1: **A: 35/35, B: 9/9,
+C: 25/25, D: 25/25, E: 15/15, E': 16/16, F: 19/19, G: 15/15.**
 
 ### Two things to get right
 

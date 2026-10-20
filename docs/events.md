@@ -9,7 +9,7 @@ and the Sign-in log panel, see the [README](../README.md).
 |---|---|
 | `login_detail_failed` | `username`, `user_id`, `ip_address`, `reason`, `flow_id`, `auth_provider`, `endpoint`, `user_agent`, `ingress`, `host`, `x_forwarded_for_untrusted` |
 | `login_detail_succeeded` | `username`, `user_id`, `ip_address`, `flow_id`, `auth_provider`, `endpoint`, `user_agent`, `ingress`, `host`, `x_forwarded_for_untrusted` |
-| `login_detail_request_rejected` | `ip_address`, `endpoint`, `reason`, `rejection`, `user_id`, `username`, `client_id`, `client_name`, `token_type`, `grant_type`, `user_agent`, `ingress`, `host`, `x_forwarded_for_untrusted` |
+| `login_detail_request_rejected` | `ip_address`, `endpoint`, `reason`, `rejection`, `user_id`, `username`, `client_id`, `client_name`, `token_type`, `grant_type`, `user_agent`, `ingress`, `host`, `x_forwarded_for_untrusted`; with `reason: ip_banned_now` also `attempts`, `threshold` (and `flow_id` from the login flow) |
 
 `username` on a failed attempt is only filled in if it belongs to an existing
 user; otherwise it is `null`, so a password typed into the username field is
@@ -59,7 +59,8 @@ Sign-in log: type=auth.request_rejected reason=unknown_or_revoked_token username
 `login_detail_request_rejected` covers requests that are rejected for invalid
 authentication *outside* the login flow - typically a client with a wrong or
 expired token on `/api/mcp`, `/api/websocket` or `/auth/token`. `reason` is
-always `invalid_request_auth`; `rejection` says why (see
+`invalid_request_auth` - or `ip_banned_now` for the request that got the IP
+address banned (see [IP bans](#ip-bans-0110)); `rejection` says why (see
 [Rejected requests](#rejected-requests)). `endpoint` is the route pattern (`/api/mcp`,
 `/api/hassio_ingress/{token}/{path}`), never the literal path or query string,
 which can carry secrets. Login flow attempts always report `/auth/login_flow`.
@@ -148,6 +149,49 @@ network calls, and a failure only means the fields stay `null`.
 Rejected requests stored before 0.7.1 show `invalid_request_auth` as their
 reason.
 
+## IP bans (0.11.0)
+
+With `ip_ban_enabled` and `login_attempts_threshold` set, core bans an IP
+address once it reaches the threshold of failed attempts and answers every
+later request from it with 403 - before any handler runs, so those requests
+are not reported. Login Detail marks the one attempt that got the address
+banned, and shows which addresses are banned now.
+
+**The attempt that got the address banned.** Right after core has counted
+an attempt, Login Detail reads core's ban list. If this very attempt put the
+address on it:
+
+- A rejected request fires `login_detail_request_rejected` with
+  `reason: ip_banned_now`, `attempts` (core's counter, normally equal to the
+  threshold) and `threshold`. `rejection` still says why the request was
+  rejected.
+- A wrong password or 2FA code is reported as `login_detail_failed`, as
+  always, and *also* fires one `login_detail_request_rejected` with
+  `reason: ip_banned_now`, `rejection: invalid_auth_request`,
+  `endpoint: /auth/login_flow`, the `flow_id`, `attempts` and `threshold`.
+  It names no user; the `login_detail_failed` event of the same `flow_id`
+  does, as far as it is known.
+- The history entry of that attempt gets `ip_banned_now: true`, `attempts`
+  and `threshold` - a rejected request as an entry of its own that is never
+  folded, a failed login on the entry it already has. So one attempt stays
+  one entry, and the 24-hour counters do not count it twice.
+- The log line is a `WARNING` and ends in
+  `ip_banned_now=True attempts=… threshold=…`:
+
+```text
+Sign-in log: type=auth.request_rejected reason=no_credentials username=None user_id=None auth_provider=None client_id=None token_type=None client_name=None grant_type=None ip=203.0.113.10 endpoint=/api/states user_agent='…' flow_id=None ingress=direct host='ha.example.com' x_forwarded_for_untrusted=None ip_banned_now=True attempts=5 threshold=5
+```
+
+**Banned now.** Each address in `addresses` on the IP address sensor has
+`banned: true` or `false` - whether it is on core's ban list at the moment
+the sensor was last updated (at most 5 minutes ago). It is always `false`
+when IP banning is off. Lift a ban the way core documents it: remove the
+address from `ip_bans.yaml` and restart.
+
+Core's ban list and counter are read, never written to. If a Home Assistant
+upgrade renames them, the ban fields disappear - nothing else changes, and
+nothing breaks.
+
 ## Websocket API
 
 The [Sign-in log panel](../README.md#sign-in-log) only talks to the websocket
@@ -173,4 +217,6 @@ client fields are only set for a rejected request whose token was proven, or
 on `/auth/token` (see [Rejected requests](#rejected-requests)); otherwise they
 are `null`. An entry
 whose username no user has (see [Events](#events)) also has
-`known_user: false`; no other entry has that key.
+`known_user: false`; no other entry has that key. The entry of the attempt
+that got its IP address banned has `ip_banned_now: true`, `attempts` and
+`threshold` (0.11.0); no other entry has those keys.

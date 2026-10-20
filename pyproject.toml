@@ -1,6 +1,6 @@
 [project]
 name = "ha-login-detail"
-version = "0.10.1"
+version = "0.11.0"
 description = "Home Assistant integration that reveals the attempted username on failed logins"
 requires-python = ">=3.13"
 
@@ -18,3 +18,6 @@ combine-as-imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
+# For pytest-homeassistant-custom-component; unknown (a warning) without it.
+asyncio_mode = "auto"
