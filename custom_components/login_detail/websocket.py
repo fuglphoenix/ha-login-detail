@@ -10,6 +10,8 @@ proposed for core in home-assistant/architecture#1346:
     client_id, client_name, token_type   (rejected requests, 0.7.1)
     known_user                           (only when false, 0.9.0)
     grant_type                           (/auth/token, 0.10.0)
+    ip_banned_now, attempts, threshold   (only on the entry whose request
+                                          got the IP address banned, 0.11.0)
     ingress, host,
     x_forwarded_for_untrusted            (every entry, 0.10.0)
 
@@ -60,6 +62,7 @@ from .const import (
     LOG_TYPE_REQUEST_REJECTED,
     LOG_TYPES,
     MAX_ENTRIES,
+    RESULT_IP_BANNED_NOW,
     RESULT_OK,
     RESULT_REQUEST_REJECTED,
 )
@@ -110,6 +113,10 @@ def as_log_entry(entry: dict[str, Any]) -> dict[str, Any]:
     }
     if entry.get("known_user") is False:
         log_entry["known_user"] = False
+    if entry.get(RESULT_IP_BANNED_NOW):
+        log_entry[RESULT_IP_BANNED_NOW] = True
+        log_entry["attempts"] = entry.get("attempts")
+        log_entry["threshold"] = entry.get("threshold")
     return log_entry
 
 

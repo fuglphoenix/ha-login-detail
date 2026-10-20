@@ -41,6 +41,17 @@
   is banned - and with it everyone. This is core's behaviour; Login Detail
   only reports it. Without `login_attempts_threshold` (the default), nothing
   is counted or banned.
+- **`banned` is the state now, not at the time of the attempts.** An address
+  banned after its last entry in the window shows `banned: true` on all of
+  them, and an address removed from `ip_bans.yaml` shows `false`. The sensor
+  reads the ban list when it updates, so a new ban can take up to 5 minutes
+  to show if nothing else is recorded in between.
+- **Requests from a banned address are not reported.** Core answers them with
+  403 before any handler or `process_wrong_login` runs, so there is nothing to
+  capture without patching core's middleware - which Login Detail does not do.
+- **An address banned by hand, or before Login Detail was loaded, has no
+  `ip_banned_now` entry.** Only a ban that happens inside core's
+  `process_wrong_login` while the integration is loaded is marked.
 - **`not_admin` on websocket commands is not reported.** A websocket command
   that requires admin answers with an error message and does not call core's
   `process_wrong_login`, so there is nothing to capture without patching core.

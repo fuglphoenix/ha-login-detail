@@ -22,12 +22,24 @@ carry no username, so they get their own event:
                                   user_id, username, client_id, client_name,
                                   token_type, grant_type, user_agent, ingress,
                                   host, x_forwarded_for_untrusted
+                                  (+ attempts, threshold - and flow_id from
+                                  the login flow - with reason ip_banned_now)
 
-`reason` is always `invalid_request_auth`; `rejection` says why (0.7.1,
+`reason` is `invalid_request_auth`; `rejection` says why (0.7.1,
 see rejection.py). The user and client are only filled in when the token
 behind the request has been proven to be theirs - the token itself is never
 kept. On /auth/token, `grant_type` and the requested `client_id` are read
 from the form core has already parsed (0.10.0).
+
+The rejection that got the IP address banned (0.11.0): after core's
+`process_wrong_login` has counted the attempt, its ban list is read (see
+ban_status.py - read only). If this very call banned the address, the event
+has `reason: ip_banned_now`, `attempts` and `threshold`, it is logged at
+WARNING, and the history entry gets `ip_banned_now: true` and is never folded.
+A wrong password or 2FA code goes through login_flow.py's own copy of
+`process_wrong_login`. It is wrapped as well, but only to read the ban list:
+the attempt is already reported as `login_detail_failed`, so the wrapper only
+fires the `ip_banned_now` event and marks the flow's entry.
 
 How the request came in (0.10.0): `ingress` is `nabu_casa` for a request
 through Home Assistant Cloud remote access and `direct` otherwise, `host` is
@@ -91,13 +103,14 @@ Written against Home Assistant 2026.10.1. The monkeypatch targets private API
 (`HassLoginFlow.async_step_init`, `LoginFlow.async_step_mfa`,
 `AuthManagerFlowManager.async_finish_flow`, `HassAuthProvider.data`,
 `AuthPhase.async_handle`, and `process_wrong_login` in
-`homeassistant.components.http.ban` and
-`homeassistant.components.websocket_api.auth`) and may stop working with any
-core upgrade. If patching fails, it is logged at startup and login continues
-unchanged. The token format and the /auth/token flow the rejection details
-rely on are checked at startup (rejection.async_self_check); a feature whose
-core API has changed is switched off with a WARNING instead of failing
-silently.
+`homeassistant.components.http.ban`,
+`homeassistant.components.websocket_api.auth` and
+`homeassistant.components.auth.login_flow`; the ban list in ban.py is read)
+and may stop working with any core upgrade. If patching fails, it is logged
+at startup and login continues unchanged. The token format and the
+/auth/token flow the rejection details rely on are checked at startup
+(rejection.async_self_check); a feature whose core API has changed is
+switched off with a WARNING instead of failing silently.
 """
 
 from __future__ import annotations
@@ -128,6 +141,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
+from .ban_status import BanState, ban_state
 from .const import (
     CONF_MAX_DAYS,
     CONF_MAX_ENTRIES,
@@ -152,6 +166,8 @@ from .const import (
     PANEL_URL_PATH,
     PRUNE_INTERVAL,
     REJECTED_FOLD_WINDOW,
+    REJECTED_INVALID_AUTH_REQUEST,
+    RESULT_IP_BANNED_NOW,
     RESULT_MFA_PENDING,
     RESULT_OK,
     RESULT_REQUEST_REJECTED,
@@ -168,6 +184,11 @@ from .rejection import (
     websocket_token,
 )
 from .websocket import async_register_websocket_commands, log_type_of
+
+try:  # private core API - without it, a login flow ban is not marked
+    from homeassistant.components.auth import login_flow as auth_login_flow
+except ImportError:  # pragma: no cover - depends on the core version
+    auth_login_flow = None
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -293,10 +314,17 @@ class LoginDetailData:
         the existing entry and moves it to the front instead - but only if it
         was rejected for the same reason and is attributed to the same user
         and client, so an unauthenticated probe never hides a known user's
-        expired token, or the other way round.
+        expired token, or the other way round. The entry that got the address
+        banned is never folded into, and nothing from after it is folded into
+        anything before it, so that moment stays visible.
         """
         now = dt_util.parse_datetime(entry["timestamp"])
         for index, previous in enumerate(self.history):
+            if previous.get(RESULT_IP_BANNED_NOW) and previous.get(
+                "ip_address"
+            ) == entry.get("ip_address"):
+                # Nothing from after the ban is folded into what came before.
+                break
             if previous.get("result") != RESULT_REQUEST_REJECTED or any(
                 previous.get(key) != entry.get(key) for key in _FOLD_KEYS
             ):
@@ -318,6 +346,32 @@ class LoginDetailData:
             return
         entry["count"] = 1
         self.async_record(entry)
+
+    @callback
+    def async_mark_banned(
+        self, flow_id: str | None, ip_address: str | None, marker: dict[str, Any]
+    ) -> bool:
+        """Mark the failed login that got the IP address banned. True if found.
+
+        login_flow.py counts a wrong password or 2FA code after the flow step
+        has run, so the step's entry is already in the history: the newest
+        failed entry of the same flow from the same address.
+        """
+        if not flow_id:
+            return False
+        for entry in self.history:
+            if entry.get("flow_id") != flow_id:
+                continue
+            if entry.get("ip_address") != ip_address or entry.get("result") in (
+                RESULT_OK,
+                RESULT_MFA_PENDING,
+            ):
+                return False
+            entry.update(marker)
+            self._async_save()
+            async_dispatcher_send(self.hass, SIGNAL_UPDATED)
+            return True
+        return False
 
     @callback
     def _async_supersede_pending(self, entry: dict[str, Any]) -> None:
@@ -439,19 +493,28 @@ def _log_line(result: str, data: dict[str, Any]) -> None:
 
     A username no user has is free text, so it is quoted with %r and followed
     by `known_user=False`; a line without the flag is unchanged.
+
+    The request that got the IP address banned (`reason` ip_banned_now) is a
+    WARNING, and the line ends with `ip_banned_now=True attempts=N
+    threshold=N`.
     """
+    banned = data.get("reason") == RESULT_IP_BANNED_NOW
     level = (
         logging.INFO
         if result in (RESULT_OK, RESULT_MFA_PENDING, RESULT_REQUEST_REJECTED)
+        and not banned
         else logging.WARNING
     )
     unknown = data.get("known_user") is False
+    suffix = " known_user=False" if unknown else ""
+    if banned:
+        suffix += " ip_banned_now=True attempts=%s threshold=%s"
     _LOGGER.log(
         level,
         "Sign-in log: type=%s reason=%s username=%s user_id=%s auth_provider=%s "
         "client_id=%s token_type=%s client_name=%r grant_type=%s ip=%s "
         "endpoint=%s user_agent=%r flow_id=%s ingress=%s host=%r "
-        "x_forwarded_for_untrusted=%r" + (" known_user=False" if unknown else ""),
+        "x_forwarded_for_untrusted=%r" + suffix,
         log_type_of(result),
         None if result == RESULT_OK else data.get("rejection") or result,
         repr(data.get("username")) if unknown else data.get("username"),
@@ -468,16 +531,22 @@ def _log_line(result: str, data: dict[str, Any]) -> None:
         data.get("ingress"),
         data.get("host"),
         data.get("x_forwarded_for_untrusted"),
+        *((data.get("attempts"), data.get("threshold")) if banned else ()),
     )
 
 
 async def _async_report_rejected(
-    hass: HomeAssistant, request: Any, *, websocket: bool = False
+    hass: HomeAssistant,
+    request: Any,
+    *,
+    websocket: bool = False,
+    ban: BanState | None = None,
 ) -> None:
     """Log, fire and store one rejected request. Must never raise.
 
     The form of a /auth/token request is only held here, in memory, for the
-    duration of the call - see rejection.token_form.
+    duration of the call - see rejection.token_form. `ban` is set when this
+    request got the IP address banned.
     """
     endpoint = _endpoint_of(request)
     form = await token_form(request) if endpoint == ENDPOINT_TOKEN else None
@@ -493,31 +562,139 @@ async def _async_report_rejected(
         "user_agent": _user_agent_of(request),
         **_ingress_of(hass, request),
     }
+    if ban is not None:
+        data.update(_ban_fields(ban))
     _log_line(RESULT_REQUEST_REJECTED, data)
     hass.bus.async_fire(EVENT_REQUEST_REJECTED, data)
 
     store = hass.data.get(DOMAIN)
     if not isinstance(store, LoginDetailData):
         return
-    store.async_record_rejected(
+    entry = {
+        "timestamp": dt_util.utcnow().isoformat(),
+        "result": RESULT_REQUEST_REJECTED,
+        "reason": data["rejection"],
+        "username": data["username"],
+        "user_id": data["user_id"],
+        "client_id": data["client_id"],
+        "client_name": data["client_name"],
+        "token_type": data["token_type"],
+        "grant_type": data["grant_type"],
+        "ip_address": data["ip_address"],
+        "auth_provider": None,
+        "flow_id": None,
+        "endpoint": data["endpoint"],
+        "user_agent": data["user_agent"],
+        **{key: data[key] for key in INGRESS_FIELDS},
+    }
+    if ban is None:
+        store.async_record_rejected(entry)
+        return
+    # The attempt that got the address banned gets an entry of its own, so the
+    # moment stays visible instead of disappearing into a folded count.
+    entry.update(_ban_marker(ban))
+    entry["count"] = 1
+    store.async_record(entry)
+
+
+async def _async_report_login_flow_ban(
+    hass: HomeAssistant, request: Any, ban: BanState
+) -> None:
+    """A wrong password or 2FA code got the IP address banned. Must never raise.
+
+    The attempt itself has already been reported as `login_detail_failed`,
+    with the username where it is known. This adds what was missing: one
+    `login_detail_request_rejected` with reason ip_banned_now, and the mark on
+    the flow's own entry. Only if that entry cannot be found - the flow ID is
+    not in the URL, or the entry is gone - does the ban get an entry of its
+    own.
+    """
+    flow_id = _flow_id_of(request)
+    data = {
+        "ip_address": str(request.remote) if request.remote is not None else None,
+        "endpoint": ENDPOINT_LOGIN_FLOW,
+        "rejection": REJECTED_INVALID_AUTH_REQUEST,
+        **dict.fromkeys(ATTRIBUTION_FIELDS),
+        "grant_type": None,
+        "flow_id": flow_id,
+        "user_agent": _user_agent_of(request),
+        **_ingress_of(hass, request),
+        **_ban_fields(ban),
+    }
+    _log_line(RESULT_REQUEST_REJECTED, data)
+    hass.bus.async_fire(EVENT_REQUEST_REJECTED, data)
+
+    store = hass.data.get(DOMAIN)
+    if not isinstance(store, LoginDetailData):
+        return
+    if store.async_mark_banned(flow_id, data["ip_address"], _ban_marker(ban)):
+        return
+    store.async_record(
         {
             "timestamp": dt_util.utcnow().isoformat(),
             "result": RESULT_REQUEST_REJECTED,
-            "reason": data["rejection"],
-            "username": data["username"],
-            "user_id": data["user_id"],
-            "client_id": data["client_id"],
-            "client_name": data["client_name"],
-            "token_type": data["token_type"],
-            "grant_type": data["grant_type"],
+            "reason": REJECTED_INVALID_AUTH_REQUEST,
+            **dict.fromkeys(ATTRIBUTION_FIELDS),
+            "grant_type": None,
             "ip_address": data["ip_address"],
             "auth_provider": None,
-            "flow_id": None,
-            "endpoint": data["endpoint"],
+            "flow_id": flow_id,
+            "endpoint": ENDPOINT_LOGIN_FLOW,
             "user_agent": data["user_agent"],
             **{key: data[key] for key in INGRESS_FIELDS},
+            **_ban_marker(ban),
+            "count": 1,
         }
     )
+
+
+def _ban_fields(ban: BanState) -> dict[str, Any]:
+    """What the event gets when its request got the IP address banned."""
+    return {
+        "reason": RESULT_IP_BANNED_NOW,
+        "attempts": ban.attempts,
+        "threshold": ban.threshold,
+    }
+
+
+def _ban_marker(ban: BanState) -> dict[str, Any]:
+    """What the history entry gets when its request got the address banned."""
+    return {
+        RESULT_IP_BANNED_NOW: True,
+        "attempts": ban.attempts,
+        "threshold": ban.threshold,
+    }
+
+
+def _banned_now(before: BanState | None, after: BanState | None) -> BanState | None:
+    """The state after the call, if this call is what banned the address.
+
+    The ban middleware answers 403 to an address that is already banned, so
+    `before` is normally not banned. A websocket can still fail auth after
+    its address was banned on another connection; that is not a new ban.
+    """
+    if after is None or not after.banned:
+        return None
+    if before is not None and before.banned:
+        return None
+    return after
+
+
+def _safe_ban_state(request: Any) -> BanState | None:
+    """Ban state of the request's address. Must never raise."""
+    try:
+        return ban_state(request.app, request.remote)
+    except Exception:  # noqa: BLE001 - the ban fields are optional detail
+        return None
+
+
+def _flow_id_of(request: Any) -> str | None:
+    """The flow ID in /auth/login_flow/{flow_id}, or None."""
+    try:
+        flow_id = request.match_info.get("flow_id")
+    except Exception:  # noqa: BLE001 - not an aiohttp request
+        return None
+    return flow_id if isinstance(flow_id, str) and flow_id else None
 
 
 def _endpoint_of(request: Any) -> str | None:
@@ -534,9 +711,9 @@ def _endpoint_of(request: Any) -> str | None:
             endpoint = resource.canonical
     except Exception:  # noqa: BLE001 - fall back to the plain path
         endpoint = None
-    if not endpoint:
+    if not endpoint or not isinstance(endpoint, str):
         endpoint = getattr(request, "path", None)
-    return endpoint[:ENDPOINT_MAX_LENGTH] if endpoint else None
+    return endpoint[:ENDPOINT_MAX_LENGTH] if isinstance(endpoint, str) else None
 
 
 def _user_agent_of(request: Any) -> str | None:
@@ -740,6 +917,9 @@ class _CorePatch:
         original_finish_flow = AuthManagerFlowManager.async_finish_flow
         original_wrong_login = http_ban.process_wrong_login
         original_ws_wrong_login = websocket_auth.process_wrong_login
+        original_login_flow_wrong_login = getattr(
+            auth_login_flow, "process_wrong_login", None
+        )
         original_ws_auth = websocket_auth.AuthPhase.async_handle
 
         async def async_step_init(
@@ -841,19 +1021,43 @@ class _CorePatch:
                 _LOGGER.exception("login_detail: could not report completed login")
             return outcome
 
+        # Each wrapper reads the ban list before and after core's call: core
+        # counts the attempt and adds the ban inside it. Only reads - core's
+        # ban state is never written to.
         async def process_wrong_login(request: Any) -> None:
+            before = _safe_ban_state(request)
             await original_wrong_login(request)
             try:
-                await _async_report_rejected(hass, request)
+                await _async_report_rejected(
+                    hass, request, ban=_banned_now(before, _safe_ban_state(request))
+                )
             except Exception:  # must never break request handling
                 _LOGGER.exception("login_detail: could not report rejected request")
 
         async def ws_process_wrong_login(request: Any) -> None:
+            before = _safe_ban_state(request)
             await original_ws_wrong_login(request)
             try:
-                await _async_report_rejected(hass, request, websocket=True)
+                await _async_report_rejected(
+                    hass,
+                    request,
+                    websocket=True,
+                    ban=_banned_now(before, _safe_ban_state(request)),
+                )
             except Exception:  # must never break request handling
                 _LOGGER.exception("login_detail: could not report rejected request")
+
+        async def login_flow_process_wrong_login(request: Any) -> None:
+            # Only the ban: the wrong password or code is already reported by
+            # async_step_init / async_step_mfa above, with the username.
+            before = _safe_ban_state(request)
+            await original_login_flow_wrong_login(request)
+            try:
+                ban = _banned_now(before, _safe_ban_state(request))
+                if ban is not None:
+                    await _async_report_login_flow_ban(hass, request, ban)
+            except Exception:  # must never break a login
+                _LOGGER.exception("login_detail: could not report an IP ban")
 
         async def ws_async_handle(self: websocket_auth.AuthPhase, msg: Any) -> Any:
             # Only hands the token on to ws_process_wrong_login, in this task
@@ -877,11 +1081,15 @@ class _CorePatch:
         # ban.py looks the name up in its own module at call time - that
         # covers the ban middleware (401 on /api/mcp and every other view) and
         # @log_invalid_auth (/auth/token). The websocket imported the name, so
-        # it gets its own patch. login_flow.py imported it too and is left
-        # alone on purpose: a wrong password there is already reported above,
-        # with the username.
+        # it gets its own patch. login_flow.py imported it too; its wrapper
+        # only reports a ban (0.11.0), since a wrong password there is already
+        # reported above, with the username.
         self._install(http_ban, "process_wrong_login", process_wrong_login)
         self._install(websocket_auth, "process_wrong_login", ws_process_wrong_login)
+        if original_login_flow_wrong_login is not None:
+            self._install(
+                auth_login_flow, "process_wrong_login", login_flow_process_wrong_login
+            )
         self._install(websocket_auth.AuthPhase, "async_handle", ws_async_handle)
 
         _LOGGER.info(

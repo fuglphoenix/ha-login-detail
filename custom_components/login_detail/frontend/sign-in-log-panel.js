@@ -43,6 +43,9 @@ const DETAILS = [
   ["host", "Host"],
   ["x_forwarded_for_untrusted", "X-Forwarded-For (untrusted)"],
   ["flow_id", "Flow ID"],
+  // Only on the entry whose request got the IP address banned (0.11.0).
+  ["attempts", "Failed attempts"],
+  ["threshold", "Ban threshold"],
 ];
 
 const MONO = ["user_id", "flow_id", "ip", "endpoint", "host", "x_forwarded_for_untrusted", "client_id"];
@@ -348,6 +351,7 @@ class LoginDetailSignInLog extends HTMLElement {
       badge.style.background = type.color;
       const cell = el("td", { class: "nowrap" }, [badge]);
       if (entry.count > 1) cell.append(el("span", { class: "count", text: `×${entry.count}` }));
+      if (entry.ip_banned_now) cell.append(el("span", { class: "count", text: "IP banned" }));
       return cell;
     }
     if (key === "username") {

@@ -36,9 +36,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
+from .ban_status import banned_addresses, is_banned
 from .const import (
     DOMAIN,
     HISTORY_ATTRIBUTE_LIMIT,
+    RESULT_IP_BANNED_NOW,
     RESULT_OK,
     SIGNAL_UPDATED,
     UPDATE_INTERVAL,
@@ -108,7 +110,7 @@ def _local(timestamp: str | None) -> str | None:
 
 def _as_text(entry: dict[str, Any]) -> dict[str, Any]:
     """History entry in the shape the attributes show it."""
-    return {
+    text = {
         "time": _local(entry.get("timestamp")),
         "result": entry.get("result"),
         "username": entry.get("username"),
@@ -118,6 +120,13 @@ def _as_text(entry: dict[str, Any]) -> dict[str, Any]:
         "endpoint": entry.get("endpoint"),
         "count": _weight(entry),
     }
+    # Only the entry that got the IP address banned has these (0.11.0); every
+    # other entry is left without three nulls.
+    if entry.get(RESULT_IP_BANNED_NOW):
+        text[RESULT_IP_BANNED_NOW] = True
+        text["attempts"] = entry.get("attempts")
+        text["threshold"] = entry.get("threshold")
+    return text
 
 
 class LoginDetailSensor(SensorEntity):
@@ -259,6 +268,10 @@ class LoginUniqueIpSensor(LoginDetailSensor):
     _attr_native_unit_of_measurement = "addresses"
 
     def _per_ip(self) -> dict[str, dict[str, Any]]:
+        # Core's ban list, read once per update and never written to (0.11.0).
+        # `banned` is the state now, not at the time of the attempts, and is
+        # always false when ip_ban_enabled is off.
+        banned = banned_addresses(self.hass) if self.hass is not None else set()
         per_ip: dict[str, dict[str, Any]] = {}
         for entry in self._window():
             ip_address = entry.get("ip_address") or "unknown"
@@ -271,6 +284,7 @@ class LoginUniqueIpSensor(LoginDetailSensor):
                     "latest": _local(entry.get("timestamp")),
                     "usernames": [],
                     "endpoints": [],
+                    "banned": is_banned(banned, entry.get("ip_address")),
                 },
             )
             if entry.get("result") == RESULT_OK:

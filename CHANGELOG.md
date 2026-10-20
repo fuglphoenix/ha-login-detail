@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-20
+
+### Added
+- **The attempt that got an IP address banned is marked.** Right after
+  core's `process_wrong_login` has counted an attempt, core's ban list is
+  read (read only). If this attempt put the address on it,
+  `login_detail_request_rejected` has `reason: ip_banned_now`, `attempts`
+  and `threshold`, and the log line is a `WARNING` ending in
+  `ip_banned_now=True attempts=… threshold=…`. Covers REST views,
+  `/auth/token`, the websocket and - through a read-only wrapper of
+  `login_flow.py`'s own `process_wrong_login` - a wrong password or 2FA
+  code, which fires that event next to its `login_detail_failed`, with the
+  `flow_id`. See "IP bans" in docs/events.md.
+- The history entry of that attempt, its websocket entry and the Login
+  history attribute get `ip_banned_now: true`, `attempts` and `threshold`.
+  A rejected request gets an entry of its own that is never folded; a
+  failed login is marked on the entry it already has, so the 24-hour
+  counters do not count it twice. Nothing after the ban is folded into an
+  entry before it.
+- **`banned: true/false` per address** on `sensor.login_ip_addresses_24h`
+  (`sensor.login_ip_adresser_24t` on installations from before 0.8.0): on
+  core's ban list at the last update. Always `false` with IP banning off.
+- The Sign-in log panel marks the entry "IP banned" and shows the failed
+  attempts and the ban threshold in the expanded row.
+- Unit tests against core's real ban code (`tests/test_ban.py`, needs
+  pytest-homeassistant-custom-component) and acceptance probe G
+  (`login_detail_probe7`).
+
+### Changed
+- `reason` on `login_detail_request_rejected` is no longer always
+  `invalid_request_auth`: it is `ip_banned_now` for the request that got the
+  address banned. `rejection` is unchanged. An automation that matches on
+  `reason: invalid_request_auth` misses that one request; match on the event
+  type instead.
+- `_endpoint_of` falls back to the path if the route pattern is not text.
+
+Nothing is written to core's ban list or counter. If an upgrade renames them,
+the ban fields disappear and everything else keeps working.
+
 ## [0.10.1] - 2026-10-17
 
 ### Changed
@@ -348,7 +387,8 @@ unchanged.
   a failed login attempt
   ([home-assistant/core#148110](https://github.com/home-assistant/core/issues/148110)).
 
-[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.9.0...v0.10.0
 [0.7.1]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.7.0...v0.7.1
