@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-05
+
+### Fixed
+- **Works on Home Assistant 2026.11 again.** 2026.11 made two-factor
+  authentication opt-in per login flow
+  ([core#186102](https://github.com/home-assistant/core/pull/186102)): the
+  `select_mfa_module` and `mfa` steps moved from `LoginFlow` to a new
+  `MfaLoginFlow`, and `AuthProvider.support_mfa` is gone. The monkeypatch
+  read `LoginFlow.async_step_mfa`, which no longer exists, so applying it
+  raised `AttributeError: type object 'LoginFlow' has no attribute
+  'async_step_mfa'` and the config entry failed to set up - no sensors, no
+  Sign-in log panel, no events. The steps are taken from `MfaLoginFlow`
+  instead, which on 2026.10 and older resolves to `LoginFlow` itself, so
+  both are supported.
+- **`mfa_pending` is reported again on 2026.11.** Core used to interrupt the
+  flow in `AuthManagerFlowManager.async_finish_flow` to ask for 2FA; from
+  2026.11 it does so in `MfaLoginFlow.async_finish`, before the flow manager
+  is reached, so "password correct, 2FA missing" was never seen. It is now
+  read from `async_finish` on 2026.11 and newer, and from `async_finish_flow`
+  as before on older cores. `ok` still comes from `async_finish_flow` on
+  both, so one login still gives one entry.
+
+### Added
+- `tests/test_login_flow.py`: the patch applied to core's real auth classes
+  and a real login flow driven through it, including the 2FA split. Needs
+  Home Assistant installed, but not
+  pytest-homeassistant-custom-component. This is the check that was missing -
+  the static checks cannot see a renamed core attribute.
+- CI runs the test suite against a real Home Assistant release on Python
+  3.14, next to the existing static checks.
+
+### Changed
+- Verified against Home Assistant 2026.11.0. `http.ban` (the ban list and
+  both counters), `websocket_api.auth`, `panel_custom.async_register_panel`
+  and `auth.login_flow.process_wrong_login` are unchanged in 2026.11; the
+  auth change above was the only break. The `hacs.json` minimum stays at
+  2026.10.0, since 2026.10 keeps working.
+
 ## [0.11.0] - 2026-10-20
 
 ### Added
