@@ -1,5 +1,15 @@
 # Upgrading
 
+## Upgrading to 0.11.1
+
+Nothing to do, and nothing changes in the events, entity IDs, unique IDs or
+attribute keys. 0.11.1 only makes the integration load on **Home Assistant
+2026.11**, which moved the two-factor steps of the login flow to a new class.
+On 0.11.0 and older, 2026.11 leaves the integration failing to set up with
+`AttributeError: type object 'LoginFlow' has no attribute 'async_step_mfa'` -
+no sensors, no Sign-in log panel and no events, while logging in itself keeps
+working normally. 0.11.1 supports 2026.10 and 2026.11 both.
+
 ## Upgrading to 0.10.0
 
 Nothing to do. Events, entity IDs, unique IDs and attribute keys are kept;
@@ -90,6 +100,7 @@ This is the one maintenance task the integration needs. Make sure
 
 | What you see | What it means | What to do |
 |---|---|---|
+| The integration shows **Failed to set up** under Settings → Devices & services, with an `AttributeError` from `custom_components/login_detail/__init__.py` in the log | A name the monkeypatch reaches for is gone - core has renamed or moved part of the login code. This is what 2026.11 did (`LoginFlow.async_step_mfa`). Logging in is unaffected. | Upgrade the integration. If there is no newer release, open an issue with the traceback and your Home Assistant version. |
 | `login_detail active - logins fire the events ...` is **missing** from the startup log | The monkeypatch could not be applied - core has moved the login code. | Check the log for a `login_detail` error. Open an issue with your Home Assistant version. |
 | The line is there, but a deliberately wrong login with a made-up username (e.g. `does-not-exist`) gives **no** `Failed login: user=does-not-exist ...` warning | The patch is applied to methods core no longer calls. | Open an issue with your Home Assistant version. |
 | The warning appears with the made-up username, and a real login raises `sensor.login_ok_24h` (`sensor.login_ok_24t` on an installation from before 0.8.0) by **exactly 1** | It works. | Nothing. |

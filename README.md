@@ -35,9 +35,14 @@ forwarded, and tokens are never stored.
 
 ## Requirements
 
-- Home Assistant **2026.10.0** or newer. The integration has only been tested
-  against Home Assistant **2026.10.1**.
+- Home Assistant **2026.10.0** or newer. The integration has been tested
+  against Home Assistant **2026.10.1** and **2026.11.0**.
 - No external Python packages.
+
+> 0.11.0 and older do not load on Home Assistant 2026.11: the config entry
+> fails to set up with `AttributeError: type object 'LoginFlow' has no
+> attribute 'async_step_mfa'`. Upgrade to **0.11.1** or newer, see the
+> [CHANGELOG](CHANGELOG.md).
 
 ## Installation
 

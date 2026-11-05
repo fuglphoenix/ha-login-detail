@@ -5,11 +5,15 @@ There are three levels of tests.
 | Level | What | Where it runs |
 |---|---|---|
 | Static checks | Manifest, `hacs.json`, translation parity, syntax, no Danish text outside `translations/da.json` | `pytest` - anywhere, also in CI |
-| Unit tests | IP ban detail (`ip_banned_now`, `banned` per IP) against core's real `ban.py` | `pytest` with Home Assistant installed; skipped otherwise |
+| Unit tests | The login flow patch against core's real auth classes, and IP ban detail (`ip_banned_now`, `banned` per IP) against core's real `ban.py` | `pytest` with Home Assistant installed; skipped otherwise |
 | Acceptance test | The whole login path against a real Home Assistant, including 2FA | Inside a Home Assistant container, by hand |
 
-The static checks cannot tell you whether the monkeypatch still works. Only
-the acceptance test can. **Run it after every Home Assistant upgrade.**
+The static checks cannot tell you whether the monkeypatch still works -
+2026.11 renamed a core attribute out from under it and every static check
+stayed green. `tests/test_login_flow.py` now catches that class of break, and
+CI runs it against a real core release. It still does not cover the whole
+login path: only the acceptance test does. **Run it after every Home
+Assistant upgrade.**
 
 ## Static checks
 
@@ -22,20 +26,39 @@ ruff format --check custom_components tools tests
 
 ## Unit tests
 
+`tests/test_login_flow.py` applies the real patch to core's real auth classes
+and drives a real login flow through it, with a stub auth provider and auth
+manager. It needs Home Assistant installed, but **not**
+pytest-homeassistant-custom-component, so it runs against any core release -
+including one the plugin has not caught up with:
+
+```sh
+pip install pytest "homeassistant==2026.11.0"   # needs Python 3.14.2+
+pytest
+```
+
+Expected result for 0.11.1 on Home Assistant 2026.11.0: **18 passed, 1
+skipped** (`test_ban.py` is skipped without the plugin). This is the job CI
+runs.
+
 `tests/test_ban.py` runs core's real `process_wrong_login` and `setup_bans`
 on a bare aiohttp app with the patch applied - from ban.py, the websocket and
 login_flow.py. It needs `pytest-homeassistant-custom-component` pinned to the
 Home Assistant version you test against (0.13.372 is Home Assistant
-2026.10.1), on Python 3.14:
+2026.10.1, 0.13.375 is 2026.10.4), on Python 3.14:
 
 ```sh
-pip install pytest-homeassistant-custom-component==0.13.372 ruff
+pip install pytest-homeassistant-custom-component==0.13.375 ruff
 pytest
 ```
 
 Expected result for 0.11.0 on Home Assistant 2026.10.1: **25 passed**.
 Without the plugin the module is skipped, and pytest warns that
 `asyncio_mode` is an unknown option.
+
+> There is no plugin release for 2026.11 yet; 0.13.375 pins 2026.10.4 and
+> fails to import against 2026.11. Until it catches up, run `test_ban.py` on
+> 2026.10.4 and `test_login_flow.py` on 2026.11.
 
 ## Acceptance test
 

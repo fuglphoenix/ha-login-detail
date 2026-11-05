@@ -87,11 +87,9 @@ What `ok` means
 ---------------
 `ok` is only reported once the login flow has *finished* - that is, after
 2FA if the user has 2FA enabled. That is why success is reported from
-`AuthManagerFlowManager.async_finish_flow` and not from `LoginFlow.async_finish`:
-core calls `async_finish` as soon as the password has been accepted, and then
-interrupts the flow in `async_finish_flow` to require 2FA. A hook on
-`async_finish` would therefore see the same login twice, the first time before
-2FA (the bug fixed in 0.3.0, see CHANGELOG.md).
+`AuthManagerFlowManager.async_finish_flow` and not from the step that accepts
+the password: a hook there would see the same login twice, the first time
+before 2FA (the bug fixed in 0.3.0, see CHANGELOG.md).
 
 The intermediate state is reported as `mfa_pending` instead (password correct,
 2FA missing). When the flow completes, the `ok` entry replaces the pending
@@ -99,15 +97,42 @@ entry with the same flow_id, so one login gives one entry. If 2FA is never
 submitted, `mfa_pending` remains - and that is exactly the attempt worth
 seeing.
 
-Written against Home Assistant 2026.10.1. The monkeypatch targets private API
-(`HassLoginFlow.async_step_init`, `LoginFlow.async_step_mfa`,
+Where 2FA is intercepted moved in 2026.11
+-----------------------------------------
+Up to and including 2026.10 the flow manager owned 2FA: `async_finish_flow`
+resolved the credentials and, if the user had a 2FA module enabled, returned
+a form instead of the entry. `mfa_pending` was read off exactly that - a
+CREATE_ENTRY going in and a form coming out.
+
+Core 2026.11 (PR home-assistant/core#186102) made 2FA opt-in per flow. The
+`select_mfa_module` and `mfa` steps moved from `LoginFlow` to a new
+`MfaLoginFlow(LoginFlow)`, `AuthProvider.support_mfa` is gone, and the
+interception now happens in `MfaLoginFlow.async_finish` - before the flow
+manager is reached at all. Two consequences, both handled below:
+
+* `LoginFlow.async_step_mfa` no longer exists, so reading it raises
+  AttributeError and the whole patch - and with it the integration - fails
+  to load. The steps are taken from `MfaLoginFlow` instead, which on 2026.10
+  and older is `LoginFlow` itself.
+* `async_finish_flow` never sees a form any more, so `mfa_pending` is read
+  from `MfaLoginFlow.async_finish` on 2026.11 and newer. That hook is only
+  installed when core actually has the new class: on older cores
+  `LoginFlow.async_finish` is the "password accepted" point, and hooking it
+  there would reintroduce the 0.3.0 double-report. `ok` keeps coming from
+  `async_finish_flow`, which still returns the final entry on both.
+
+Written against Home Assistant 2026.11.0, 2026.10.1 kept working. The
+monkeypatch targets private API (`HassLoginFlow.async_step_init`,
+`MfaLoginFlow.async_step_mfa`, `MfaLoginFlow.async_finish`,
 `AuthManagerFlowManager.async_finish_flow`, `HassAuthProvider.data`,
 `AuthPhase.async_handle`, and `process_wrong_login` in
 `homeassistant.components.http.ban`,
 `homeassistant.components.websocket_api.auth` and
 `homeassistant.components.auth.login_flow`; the ban list in ban.py is read)
-and may stop working with any core upgrade. If patching fails, it is logged
-at startup and login continues unchanged. The token format and the
+and may stop working with any core upgrade. If a name it reaches for is gone,
+`apply` raises and the config entry fails to set up: loudly, and without
+touching the login path, which keeps working exactly as core intends. That is
+what 2026.11 did, see above. The token format and the
 /auth/token flow the rejection details rely on are checked at startup
 (rejection.async_self_check); a feature whose core API has changed is
 switched off with a WARNING instead of failing silently.
@@ -189,6 +214,11 @@ try:  # private core API - without it, a login flow ban is not marked
     from homeassistant.components.auth import login_flow as auth_login_flow
 except ImportError:  # pragma: no cover - depends on the core version
     auth_login_flow = None
+
+try:  # 2026.11 moved the 2FA steps out of LoginFlow, see the module docstring
+    from homeassistant.auth.providers import MfaLoginFlow
+except ImportError:  # pragma: no cover - Home Assistant 2026.10 and older
+    MfaLoginFlow = LoginFlow
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -913,7 +943,8 @@ class _CorePatch:
             return
 
         original_init = HassLoginFlow.async_step_init
-        original_mfa = LoginFlow.async_step_mfa
+        original_mfa = MfaLoginFlow.async_step_mfa
+        original_finish = MfaLoginFlow.async_finish
         original_finish_flow = AuthManagerFlowManager.async_finish_flow
         original_wrong_login = http_ban.process_wrong_login
         original_ws_wrong_login = websocket_auth.process_wrong_login
@@ -951,8 +982,34 @@ class _CorePatch:
                 _LOGGER.exception("login_detail: could not report failed login attempt")
             return result
 
+        async def async_finish(self: Any, flow_result: Any) -> Any:
+            """2026.11 and newer: the password is accepted, 2FA may follow.
+
+            Core returns the `select_mfa_module` form from here when the user
+            has a 2FA module enabled, and otherwise creates the entry. A form
+            is therefore the same signal `async_finish_flow` used to give on
+            2026.10: password correct, 2FA missing. The entry case is left to
+            `async_finish_flow`, so `ok` is still only reported once the flow
+            has really finished.
+            """
+            result = await original_finish(self, flow_result)
+            try:
+                if result.get("type") == FlowResultType.FORM:
+                    _report(
+                        hass,
+                        RESULT_MFA_PENDING,
+                        _username_of_result(self, flow_result),
+                        _user_id_of(self),
+                        _ip_of(self),
+                        self,
+                        self.flow_id,
+                    )
+            except Exception:  # must never break a login
+                _LOGGER.exception("login_detail: could not report pending 2FA")
+            return result
+
         async def async_step_mfa(
-            self: LoginFlow, user_input: dict[str, str] | None = None
+            self: Any, user_input: dict[str, str] | None = None
         ) -> Any:
             result = await original_mfa(self, user_input)
             try:
@@ -988,8 +1045,10 @@ class _CorePatch:
             outcome = await original_finish_flow(self, flow, result)
             try:
                 # async_finish_flow is only called on CREATE_ENTRY and ABORT.
-                # A CREATE_ENTRY in and a form out means exactly one thing:
-                # the password was correct, and core now requires 2FA.
+                # Up to 2026.10 a CREATE_ENTRY in and a form out meant exactly
+                # one thing: the password was correct, and core now requires
+                # 2FA. From 2026.11 that interception sits in async_finish
+                # above instead, and the form never reaches this point.
                 if result.get("type") == FlowResultType.CREATE_ENTRY:
                     outcome_type = outcome.get("type")
                     if (
@@ -1076,7 +1135,13 @@ class _CorePatch:
                 websocket_token.reset(reset)
 
         self._install(HassLoginFlow, "async_step_init", async_step_init)
-        self._install(LoginFlow, "async_step_mfa", async_step_mfa)
+        self._install(MfaLoginFlow, "async_step_mfa", async_step_mfa)
+        # Only on 2026.11 and newer. On older cores MfaLoginFlow is LoginFlow,
+        # whose async_finish runs as soon as the password is accepted - the
+        # double-report fixed in 0.3.0. There async_finish_flow below is the
+        # one that sees 2FA.
+        if MfaLoginFlow is not LoginFlow:
+            self._install(MfaLoginFlow, "async_finish", async_finish)
         self._install(AuthManagerFlowManager, "async_finish_flow", async_finish_flow)
         # ban.py looks the name up in its own module at call time - that
         # covers the ban middleware (401 on /api/mcp and every other view) and

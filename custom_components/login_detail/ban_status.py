@@ -13,7 +13,8 @@ them, and every function returns "unknown" instead of raising - if core
 renames a key, the ban fields disappear and everything else keeps working.
 
 Verified against Home Assistant 2025.10.0, 2026.4.0, 2026.9.0, 2026.10.1,
-2026.10.2 and core dev of 2026-10-19.
+2026.10.2, core dev of 2026-10-19 and 2026.11.0 - all three keys and
+`ip_bans_lookup` are unchanged in 2026.11.
 """
 
 from __future__ import annotations
