@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 import traceback
 from typing import Any
@@ -33,7 +34,7 @@ DOMAIN = "login_detail_probe5"
 TARGET = "login_detail"
 REPORT = "report5.json"
 
-BASE = "http://127.0.0.1:18123"
+BASE = f"http://127.0.0.1:{os.environ.get('HA_PROBE_PORT', '18123')}"
 CLIENT_ID = f"{BASE}/"
 PASSWORD = "correct-horse-battery"
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) ProbeBrowser/1.0"

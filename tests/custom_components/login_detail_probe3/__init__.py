@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import timedelta
 import json
 import logging
+import os
 import traceback
 from typing import Any
 
@@ -29,7 +30,7 @@ DOMAIN = "login_detail_probe3"
 TARGET = "login_detail"
 REPORT = "report3.json"
 
-BASE = "http://127.0.0.1:18123"
+BASE = f"http://127.0.0.1:{os.environ.get('HA_PROBE_PORT', '18123')}"
 CLIENT_ID = f"{BASE}/"
 PASSWORD = "correct-horse-battery"
 # What a user types into the username field by mistake.

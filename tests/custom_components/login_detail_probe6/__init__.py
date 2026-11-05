@@ -54,7 +54,7 @@ EVENTS = "events6.json"
 EVENT_REJECTED = "login_detail_request_rejected"
 EVENT_FAILED = "login_detail_failed"
 
-BASE = "http://127.0.0.1:18123"
+BASE = f"http://127.0.0.1:{os.environ.get('HA_PROBE_PORT', '18123')}"
 PASSWORD = "correct-horse-battery"
 CLIENT_ID = "https://app.example/"
 OTHER_CLIENT_ID = "https://other-app.example/"

@@ -33,6 +33,7 @@ from datetime import timedelta
 from ipaddress import ip_address
 import json
 import logging
+import os
 import time
 import traceback
 from typing import Any
@@ -56,7 +57,7 @@ TARGET = "login_detail"
 REPORT = "report4.json"
 EVENT = "login_detail_request_rejected"
 
-BASE = "http://127.0.0.1:18123"
+BASE = f"http://127.0.0.1:{os.environ.get('HA_PROBE_PORT', '18123')}"
 MCP = f"{BASE}/api/mcp"
 PASSWORD = "correct-horse-battery"
 CLIENT_ID = "https://mcp-client.example"
