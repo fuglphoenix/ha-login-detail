@@ -37,9 +37,19 @@ pip install pytest "homeassistant==2026.11.0"   # needs Python 3.14.2+
 pytest
 ```
 
-Expected result for 0.11.1 on Home Assistant 2026.11.0: **18 passed, 1
-skipped** (`test_ban.py` is skipped without the plugin). This is the job CI
-runs.
+Run it against **both ends of the supported range**, because the 2FA steps
+sit on different classes in the two: `2026.10.0` is the minimum `hacs.json`
+allows, `2026.11.0` is the release that moved them to `MfaLoginFlow`. Both
+need Python 3.14.2 or newer.
+
+Expected result for 0.11.1 (`test_ban.py` is skipped without the plugin):
+
+| Core | Result | Why the difference |
+|---|---|---|
+| 2026.11.0 | **18 passed, 1 skipped** | |
+| 2026.10.0 | **16 passed, 3 skipped** | The two `async_finish` tests only apply from 2026.11; on 2026.10 `test_apply_and_revert` asserts the wrapper is *not* installed instead |
+
+This is the job CI runs, as a matrix over the two versions.
 
 `tests/test_ban.py` runs core's real `process_wrong_login` and `setup_bans`
 on a bare aiohttp app with the patch applied - from ban.py, the websocket and

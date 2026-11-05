@@ -36,13 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pytest-homeassistant-custom-component. This is the check that was missing -
   the static checks cannot see a renamed core attribute.
 - CI runs the test suite against a real Home Assistant release on Python
-  3.14, next to the existing static checks.
+  3.14, next to the existing static checks - as a matrix over 2026.10.0 and
+  2026.11.0, the two ends of the supported range.
 
 ### Changed
-- Verified against Home Assistant 2026.11.0. `http.ban` (the ban list and
-  both counters), `websocket_api.auth`, `panel_custom.async_register_panel`
-  and `auth.login_flow.process_wrong_login` are unchanged in 2026.11; the
-  auth change above was the only break. The `hacs.json` minimum stays at
+- Verified against Home Assistant 2026.11.0 and 2026.10.0. `http.ban` (the
+  ban list and both counters), `websocket_api.auth`,
+  `panel_custom.async_register_panel` and
+  `auth.login_flow.process_wrong_login` are unchanged in 2026.11; the auth
+  change above was the only break. The `hacs.json` minimum stays at
   2026.10.0, since 2026.10 keeps working.
 
 ## [0.11.0] - 2026-10-20
