@@ -22,6 +22,7 @@ from __future__ import annotations
 from ipaddress import ip_address
 import json
 import logging
+import os
 import traceback
 from typing import Any
 
@@ -40,7 +41,7 @@ REPORT = "report7.json"
 EVENT_REJECTED = "login_detail_request_rejected"
 EVENT_FAILED = "login_detail_failed"
 
-BASE = "http://127.0.0.1:18123"
+BASE = f"http://127.0.0.1:{os.environ.get('HA_PROBE_PORT', '18123')}"
 PASSWORD = "correct-horse-battery"
 WRONG_PASSWORD = "wrong-password-81c3"
 CLIENT_ID = "https://app.example/"
