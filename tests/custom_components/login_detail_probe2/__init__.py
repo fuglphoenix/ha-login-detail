@@ -24,6 +24,16 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
+try:  # 2026.11 moved the 2FA steps off LoginFlow to a new MfaLoginFlow
+    from homeassistant.auth.providers import MfaLoginFlow
+except ImportError:  # Home Assistant 2026.10 and older
+    MfaLoginFlow = LoginFlow
+
+# The class the 2FA step sits on in this core, for the name below. The probe
+# resolves it itself rather than importing login_detail's answer, so a wrong
+# answer there is still caught here.
+MFA_FLOW = f"{MfaLoginFlow.__name__}.async_step_mfa"
+
 DOMAIN = "login_detail_probe2"
 TARGET = "login_detail"
 REPORT = "report2.json"
@@ -130,8 +140,8 @@ async def _checks(hass: HomeAssistant, check: Any) -> None:
     patched = {
         "HassLoginFlow.async_step_init": "login_detail"
         in getattr(HassLoginFlow.async_step_init, "__module__", ""),
-        "LoginFlow.async_step_mfa": "login_detail"
-        in getattr(LoginFlow.async_step_mfa, "__module__", ""),
+        MFA_FLOW: "login_detail"
+        in getattr(MfaLoginFlow.async_step_mfa, "__module__", ""),
         "AuthManagerFlowManager.async_finish_flow": "login_detail"
         in getattr(AuthManagerFlowManager.async_finish_flow, "__module__", ""),
     }

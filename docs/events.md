@@ -98,7 +98,7 @@ the event and in `reason` in the sign-in log and the log line:
 | `unknown_or_revoked_token` | A token for a refresh token that does not exist (any more) - revoked, logged out, the user was deactivated or deleted - or a token with a forged signature. On `/auth/token`: a refresh grant whose refresh token does not exist (any more). | - |
 | `malformed_credentials` | An `Authorization` header that is not `Bearer <token>`, a websocket auth message without a usable token, or (since 0.10.0) a bearer value that is not a JWT at all, such as a random string. On `/auth/token`: a refresh grant without a refresh token. | - |
 | `invalid_signed_path` | A signed path (`authSig`) that core did not accept. | - |
-| `not_admin` | A valid user, turned away by the endpoint because they are not an administrator - for example the MCP server with "require admin" on. | yes |
+| `not_admin` | A valid user, turned away by a REST view because they are not an administrator. Core has to answer 401 for it to be reported, see [Known limitations](known-limitations.md). | yes |
 | `permission_denied` | The same for an administrator (another permission check). | yes |
 | `invalid_auth_request` | `/auth/login_flow` rejected the request - or `/auth/token` did, and its form could not be read (or the self-check switched the `/auth/token` details off, see [Upgrading](upgrading.md#after-a-home-assistant-upgrade)). | - |
 | `invalid_client_id` | `/auth/token`: the `client_id` is missing or not a valid URL. The value is not stored. | - |

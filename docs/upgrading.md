@@ -1,5 +1,26 @@
 # Upgrading
 
+## Upgrading to 0.11.2
+
+Nothing to do, and nothing changes in the events, entity IDs, unique IDs or
+attribute keys. On **Home Assistant 2026.11** with 0.11.1 or older, every
+rejection on `/auth/token` was reported as `rejection: invalid_auth_request`
+with no `client_id`, `grant_type`, `token_type` or user - the detail 0.10.0
+added was silently gone, and the self-check still said `token_endpoint`
+passed. 0.11.2 restores it and makes the self-check catch that class of
+change. On 2026.10 nothing was affected and nothing changes.
+
+Two things on 2026.11 are core's own choice and stay that way:
+
+- An MCP server with "require admin" answers a non-admin with 403 instead of
+  401. Core does not treat 403 as a failed login, so it is not reported and
+  does not count towards the IP ban. The call is still refused.
+- A request to `/auth/token` that repeats a form field is refused by core
+  before it looks at the grant type. It is reported with the reason the grant
+  itself would have got.
+
+See [Known limitations](known-limitations.md).
+
 ## Upgrading to 0.11.1
 
 Nothing to do, and nothing changes in the events, entity IDs, unique IDs or

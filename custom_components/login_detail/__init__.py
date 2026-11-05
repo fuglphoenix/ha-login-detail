@@ -136,6 +136,13 @@ what 2026.11 did, see above. The token format and the
 /auth/token flow the rejection details rely on are checked at startup
 (rejection.async_self_check); a feature whose core API has changed is
 switched off with a WARNING instead of failing silently.
+
+Reading core's source is not enough on its own, as 2026.11 also showed: it
+changed the signature of `indieauth.verify_client_id` while every line the
+self-check reads stayed where it was, so the check passed while every
+rejection on /auth/token lost its details. Since 0.11.2 the self-check also
+runs the /auth/token classification once on made-up forms (see
+rejection._token_endpoint_dry_run).
 """
 
 from __future__ import annotations
