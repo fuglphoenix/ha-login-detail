@@ -27,6 +27,16 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import entity_registry as er, translation
 from homeassistant.helpers.typing import ConfigType
 
+try:  # 2026.11 moved the 2FA steps off LoginFlow to a new MfaLoginFlow
+    from homeassistant.auth.providers import MfaLoginFlow
+except ImportError:  # Home Assistant 2026.10 and older
+    MfaLoginFlow = LoginFlow
+
+# The class the 2FA step sits on in this core, for the names below. The probe
+# resolves it itself rather than importing login_detail's answer, so a wrong
+# answer there is still caught here.
+MFA_FLOW = f"{MfaLoginFlow.__name__}.async_step_mfa"
+
 DOMAIN = "login_detail_probe"
 TARGET = "login_detail"
 REPORT = "report.json"
@@ -171,11 +181,11 @@ async def _login(
 
 def _is_patched() -> dict[str, bool]:
     """Which core methods currently carry login_detail's monkeypatch."""
-    return {
+    patched = {
         "HassLoginFlow.async_step_init": "login_detail"
         in getattr(HassLoginFlow.async_step_init, "__module__", ""),
-        "LoginFlow.async_step_mfa": "login_detail"
-        in getattr(LoginFlow.async_step_mfa, "__module__", ""),
+        MFA_FLOW: "login_detail"
+        in getattr(MfaLoginFlow.async_step_mfa, "__module__", ""),
         "AuthManagerFlowManager.async_finish_flow": "login_detail"
         in getattr(AuthManagerFlowManager.async_finish_flow, "__module__", ""),
         "ban.process_wrong_login": "login_detail"
@@ -185,6 +195,14 @@ def _is_patched() -> dict[str, bool]:
         "AuthPhase.async_handle": "login_detail"
         in getattr(websocket_auth.AuthPhase.async_handle, "__module__", ""),
     }
+    if MfaLoginFlow is not LoginFlow:
+        # Where 2FA is intercepted from 2026.11. On 2026.10 and older this
+        # method runs as soon as the password is accepted, and wrapping it
+        # there is the double-report fixed in 0.3.0 - so it must stay core's.
+        patched[f"{MfaLoginFlow.__name__}.async_finish"] = "login_detail" in getattr(
+            MfaLoginFlow.async_finish, "__module__", ""
+        )
+    return patched
 
 
 def _unpatch_mechanics() -> tuple[bool, Any]:
@@ -409,7 +427,7 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
     )
     qualnames = {
         "HassLoginFlow.async_step_init": HassLoginFlow.async_step_init.__qualname__,
-        "LoginFlow.async_step_mfa": LoginFlow.async_step_mfa.__qualname__,
+        MFA_FLOW: MfaLoginFlow.async_step_mfa.__qualname__,
         "AuthManagerFlowManager.async_finish_flow": (
             AuthManagerFlowManager.async_finish_flow.__qualname__
         ),

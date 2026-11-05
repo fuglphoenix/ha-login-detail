@@ -62,6 +62,20 @@ The token itself is never stored, logged, compared to anything stored, or
 returned - only what can be derived from it. All of this runs in memory after
 core has already answered, with no I/O and no network calls, and it never
 raises.
+
+The client ID check moved in 2026.11
+------------------------------------
+Core's `indieauth.verify_client_id` took the client ID on its own up to and
+including 2026.10. In 2026.11 it takes the request's own origin as well
+(`request_scheme` and `request_netloc`): a client ID whose host is a public
+IP address is valid when it is the origin the request was made to, which is
+how the frontend builds its client ID. Calling it the old way raises
+TypeError, and since `classify` never raises, every rejection on /auth/token
+came out as `invalid_request_auth` with nothing filled in - the whole point
+of 0.10.0, silently gone (0.11.2). The call is now made the way the installed
+core wants it, so the verdict stays core's own, and the self-check below runs
+the whole classification once at startup instead of only reading core's
+source, so the next such change is caught at setup rather than in the log.
 """
 
 from __future__ import annotations
@@ -189,7 +203,7 @@ def _classify(
     form: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     if endpoint == ENDPOINT_TOKEN and form is not None:
-        return _classify_token_endpoint(hass, form)
+        return _classify_token_endpoint(hass, request, form)
     if endpoint and endpoint.startswith("/auth/"):
         # /auth/login_flow rejects on what is in the body, and the body is
         # not read here. /auth/token too, if its form could not be read.
@@ -280,21 +294,19 @@ def _classify_token(hass: HomeAssistant, token: str) -> dict[str, Any]:
 
 
 def _classify_token_endpoint(
-    hass: HomeAssistant, form: Mapping[str, Any]
+    hass: HomeAssistant, request: Any, form: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Why /auth/token turned the grant down - the same checks, in core's order.
 
-    Mirrors TokenView in Home Assistant 2026.10.1. Only the grant type, the
-    requested client ID and, once the refresh token is proven, its user and
-    token type leave this function.
+    Mirrors TokenView in Home Assistant 2026.10.1 and 2026.11.0. Only the
+    grant type, the requested client ID and, once the refresh token is proven,
+    its user and token type leave this function.
     """
     grant_type = form.get("grant_type")
     if grant_type not in GRANT_TYPES:
         return _found(REJECTED_UNSUPPORTED_GRANT_TYPE, grant_type=GRANT_TYPE_OTHER)
     client_id = form.get("client_id")
-    valid_client_id = isinstance(client_id, str) and indieauth.verify_client_id(
-        client_id
-    )
+    valid_client_id = _verify_client_id(request, client_id)
 
     if grant_type == "authorization_code":
         if not valid_client_id:
@@ -332,6 +344,25 @@ def _classify_token_endpoint(
         refresh_token,
         grant_type=grant_type,
         client_id=requested,
+    )
+
+
+def _verify_client_id(request: Any, client_id: Any) -> bool:
+    """Core's own client ID check, called the way this core version takes it.
+
+    Up to 2026.10 `verify_client_id` took the client ID alone. 2026.11 added
+    the request's own scheme and netloc, so that the origin the request was
+    made to is a valid client ID even when it is a public IP address. The
+    arguments are read off core's signature rather than guessed at from the
+    version, so a core that only has the old one keeps working.
+    """
+    if not isinstance(client_id, str):
+        return False
+    parameters = inspect.signature(indieauth.verify_client_id).parameters
+    if "request_scheme" not in parameters:
+        return indieauth.verify_client_id(client_id)
+    return indieauth.verify_client_id(
+        client_id, request_scheme=request.scheme, request_netloc=request.host
     )
 
 
@@ -405,8 +436,17 @@ async def async_self_check(hass: HomeAssistant) -> dict[str, bool]:
     in that order, and on `async_get_refresh_token_by_token`. Both are checked
     against core's own source, without creating a token. A feature that fails
     is switched off (see `features`), and a WARNING says so.
+
+    Reading core's source is not enough on its own: 2026.11 left every one of
+    those lines in place and changed the signature of a function called from
+    them, which the source check happily passed while every rejection on
+    /auth/token lost its details (0.11.2). So the /auth/token classification
+    is also run once, end to end, on made-up forms that cannot belong to
+    anyone - see _token_endpoint_dry_run.
     """
     found = await hass.async_add_executor_job(_self_check, hass)
+    if found[FEATURE_TOKEN_ENDPOINT]:
+        found[FEATURE_TOKEN_ENDPOINT] = _passes(_token_endpoint_dry_run, hass)
     features.update(found)
     return found
 
@@ -435,6 +475,73 @@ def _token_identification_ok(hass: HomeAssistant) -> bool:
     )
 
 
+class _DryRunRequest:
+    """Just enough of a request for the self-check's dry run.
+
+    From 2026.11 core's client ID check wants the origin the request was made
+    to. Loopback is used, so the dry run asks exactly what the frontend of a
+    fresh installation asks.
+    """
+
+    scheme = "http"
+    host = "127.0.0.1:8123"
+
+
+# The forms the dry run classifies. None of them can belong to anyone: the
+# refresh token is not in the format core issues, and the client ID is the
+# loopback origin of the fake request above. The lookups they cause are the
+# same read-only in-memory ones a rejected request causes.
+_DRY_RUN_CLIENT_ID = "http://127.0.0.1:8123/"
+_DRY_RUN_FORMS: tuple[tuple[dict[str, str], str], ...] = (
+    (
+        {
+            "grant_type": "refresh_token",
+            "client_id": _DRY_RUN_CLIENT_ID,
+            "refresh_token": "login_detail self-check - not a refresh token",
+        },
+        REJECTED_UNKNOWN_OR_REVOKED_TOKEN,
+    ),
+    (
+        {"grant_type": "refresh_token", "client_id": _DRY_RUN_CLIENT_ID},
+        REJECTED_MALFORMED_CREDENTIALS,
+    ),
+    (
+        {"grant_type": "authorization_code", "client_id": _DRY_RUN_CLIENT_ID},
+        REJECTED_INVALID_AUTHORIZATION_CODE,
+    ),
+    (
+        {"grant_type": "authorization_code", "client_id": "not a client id"},
+        REJECTED_INVALID_CLIENT_ID,
+    ),
+    ({"grant_type": "login_detail self-check"}, REJECTED_UNSUPPORTED_GRANT_TYPE),
+)
+
+
+def _token_endpoint_dry_run(hass: HomeAssistant) -> bool:
+    """Classify a few made-up /auth/token forms and check what comes out.
+
+    This is what catches a core change the source check cannot see: anything
+    that makes the classification raise, or stop naming the grant type and
+    the requested client ID, fails here - and the feature is switched off
+    with a WARNING instead of quietly reporting `invalid_auth_request` for
+    every rejection on /auth/token.
+    """
+    request = _DryRunRequest()
+    for form, expected in _DRY_RUN_FORMS:
+        found = _classify_token_endpoint(hass, request, form)
+        if found["reason"] != expected or found["user_id"] is not None:
+            return False
+        if expected == REJECTED_UNSUPPORTED_GRANT_TYPE:
+            continue
+        if found["grant_type"] != form["grant_type"]:
+            return False
+        if expected != REJECTED_INVALID_CLIENT_ID and (
+            found["client_id"] != _DRY_RUN_CLIENT_ID
+        ):
+            return False
+    return True
+
+
 def _token_endpoint_ok(hass: HomeAssistant) -> bool:
     if TokenView is None or indieauth is None:
         return False
@@ -446,6 +553,7 @@ def _token_endpoint_ok(hass: HomeAssistant) -> bool:
         and "await request.post()" in source
         and 'data.get("grant_type")' in source
         and 'data.get("client_id")' in source
+        and "indieauth.verify_client_id(" in source
         and 'data.get("refresh_token")' in source
         and "async_get_refresh_token_by_token(token)" in source
         and "refresh_token.client_id != client_id" in source

@@ -5,6 +5,11 @@ malformed_credentials (D10), and a rejected refresh grant on /auth/token
 says why, with its grant type and client ID (D18). Probe F covers the rest
 of 0.10.0.
 
+Updated for 0.11.2: `not_admin` is exercised on the probe's own admin-only
+view (D14), because 2026.11 made the MCP server answer a non-admin 403
+instead of 401. D14b checks that change itself, by what core actually
+answered, so the probe passes on 2026.10 and 2026.11 both.
+
 Like the other probes this is NOT part of login_detail and is never installed
 on a real instance. It sets the integration and the MCP server ("require
 admin", the default) up from the UI, sends rejected requests over real HTTP
@@ -33,7 +38,9 @@ import traceback
 from typing import Any
 
 import aiohttp
+from aiohttp import web
 from homeassistant.auth.models import TOKEN_TYPE_LONG_LIVED_ACCESS_TOKEN
+from homeassistant.components.http import HomeAssistantView, require_admin
 from homeassistant.components.http.ban import (
     KEY_FAILED_LOGIN_ATTEMPTS,
     KEY_LOGIN_THRESHOLD,
@@ -61,7 +68,31 @@ OUTSIDE = "203.0.113.7"
 
 MCP_BODY = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
 
+# The probe's own admin-only endpoint, see AdminOnlyView.
+ADMIN_ONLY = f"/api/{DOMAIN}/admin_only"
+
 _LOGGER = logging.getLogger(__name__)
+
+
+class AdminOnlyView(HomeAssistantView):
+    """An endpoint of the probe's own that only an administrator may call.
+
+    `not_admin` is a user core authenticated and the endpoint then turned
+    away with `Unauthorized`, which core answers with 401 and counts as a
+    failed login. The MCP server used to be that endpoint; 2026.11 turns a
+    non-admin away with `HTTPForbidden` (403) instead, which is an
+    authorization failure, never reaches `process_wrong_login` and is
+    therefore nothing login_detail can or should report. D14b below checks
+    that core change itself; this view keeps `not_admin` covered on every
+    core, with one endpoint that behaves the same on both.
+    """
+
+    url = ADMIN_ONLY
+    name = f"api:{DOMAIN}:admin_only"
+
+    @require_admin
+    async def get(self, request: web.Request) -> web.Response:
+        return web.json_response({"ok": True})
 
 
 class Report:
@@ -85,7 +116,12 @@ class LogCapture(logging.Handler):
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Start the probe once Home Assistant is up."""
+    """Start the probe once Home Assistant is up.
+
+    The view has to be registered here: once the server is running, aiohttp's
+    router is frozen and no route can be added.
+    """
+    hass.http.register_view(AdminOnlyView)
 
     async def _started(event: Any) -> None:
         hass.async_create_task(_run(hass))
@@ -405,18 +441,45 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
         )
 
         # ---- 4. Type 3: a valid user the endpoint turns away -----------------
+        async with session.get(
+            f"{BASE}{ADMIN_ONLY}",
+            headers={
+                "User-Agent": "Probe/admin-only",
+                "Authorization": f"Bearer {member_valid}",
+            },
+        ) as resp:
+            await resp.read()
+            admin_only_status = resp.status
         member_resp = await _mcp(session, "Probe/member", f"Bearer {member_valid}")
         admin_resp = await _mcp(session, "Probe/admin", f"Bearer {admin_valid}")
         await hass.async_block_till_done()
-        event = _event("Probe/member")
+        event = _event("Probe/admin-only")
         report.check(
-            "D14. non-admin on an MCP server that requires admin: 401, not_admin "
-            "with user and client",
-            member_resp.status == 401
+            "D14. non-admin on an admin-only endpoint: 401, not_admin with user "
+            "and client",
+            admin_only_status == 401
             and event is not None
             and event["rejection"] == "not_admin"
+            and event["endpoint"] == ADMIN_ONLY
             and _attributed(event, member, client_id=CLIENT_ID, token_type="normal"),
-            [member_resp.status, event],
+            [admin_only_status, event],
+        )
+        # Which of the two core does depends on the version, see AdminOnlyView.
+        mcp_not_admin = _event("Probe/member")
+        report.check(
+            "D14b. the MCP server with require admin turns a non-admin away: "
+            "401 and not_admin up to 2026.10, 403 and nothing to report from "
+            "2026.11, where core stopped calling it a failed login",
+            (
+                member_resp.status == 401
+                and mcp_not_admin is not None
+                and mcp_not_admin["rejection"] == "not_admin"
+                and _attributed(
+                    mcp_not_admin, member, client_id=CLIENT_ID, token_type="normal"
+                )
+            )
+            or (member_resp.status == 403 and mcp_not_admin is None),
+            [member_resp.status, mcp_not_admin],
         )
         report.check(
             "D15. the admin with a valid token is let through and not recorded",
@@ -519,23 +582,24 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
         reasons = sorted(
             (h["reason"], h.get("user_id") or "", h["count"]) for h in on_mcp
         )
+        expected_reasons = [
+            ("no_credentials", "", 2),
+            # The admin's normal and long-lived token: two clients.
+            ("expired_token", admin.id, 1),
+            ("expired_token", admin.id, 1),
+            ("unknown_or_revoked_token", "", 5),
+            ("user_not_allowed", homebody.id, 1),
+            # Basic auth and the bearer value that is not a JWT.
+            ("malformed_credentials", "", 2),
+        ]
+        if mcp_not_admin is not None:
+            # Up to 2026.10 the MCP server's own admin guard lands here too;
+            # from 2026.11 it answers 403 and never reaches login_detail.
+            expected_reasons.append(("not_admin", member.id, 1))
         report.check(
             "D20. history on /api/mcp: one entry per reason and user, repeats folded",
-            reasons
-            == sorted(
-                [
-                    ("no_credentials", "", 2),
-                    # The admin's normal and long-lived token: two clients.
-                    ("expired_token", admin.id, 1),
-                    ("expired_token", admin.id, 1),
-                    ("unknown_or_revoked_token", "", 5),
-                    ("user_not_allowed", homebody.id, 1),
-                    # Basic auth and the bearer value that is not a JWT.
-                    ("malformed_credentials", "", 2),
-                    ("not_admin", member.id, 1),
-                ]
-            ),
-            reasons,
+            reasons == sorted(expected_reasons),
+            [reasons, sorted(expected_reasons)],
         )
         expired_entry = next(
             (h for h in on_mcp if h["reason"] == "expired_token"), None
@@ -564,11 +628,16 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
         report.check(
             "D22. sign_in_log/list: reason filter, client fields, user filter "
             "finds the rejection",
-            len(by_reason) == 1
-            and by_reason[0]["reason"] == "not_admin"
-            and by_reason[0]["client_id"] == CLIENT_ID
-            and by_reason[0]["token_type"] == "normal"
-            and by_reason[0]["client_name"] is None
+            # The probe's own admin-only endpoint, and up to 2026.10 the MCP
+            # server as well.
+            len(by_reason) == 1 + (mcp_not_admin is not None)
+            and all(
+                entry["reason"] == "not_admin"
+                and entry["client_id"] == CLIENT_ID
+                and entry["token_type"] == "normal"
+                and entry["client_name"] is None
+                for entry in by_reason
+            )
             and any(e["type"] == "auth.request_rejected" for e in by_user),
             [by_reason, by_user],
         )

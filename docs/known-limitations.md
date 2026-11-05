@@ -55,7 +55,21 @@
 - **`not_admin` on websocket commands is not reported.** A websocket command
   that requires admin answers with an error message and does not call core's
   `process_wrong_login`, so there is nothing to capture without patching core.
-  `not_admin` covers REST views such as `/api/mcp`.
+  `not_admin` covers REST views that turn a non-admin away with core's
+  `Unauthorized`, which it answers with 401.
+- **`not_admin` is only reported when core answers 401.** A view may instead
+  answer 403 (`HTTPForbidden`), which core treats as an authorization failure:
+  it does not call `process_wrong_login`, does not count towards the IP ban,
+  and is not reported. Home Assistant's own MCP server did this from 2026.11
+  ("require admin" now answers 403 where 2026.10 answered 401), so an MCP
+  client calling as a non-admin no longer shows up in the Sign-in log. The
+  call was still refused - it is core's choice of status code that changed,
+  not the outcome.
+- **Duplicate form fields on `/auth/token` get the grant's own reason.** From
+  2026.11 core refuses a request that repeats a parameter (RFC 6749 3.2)
+  before it looks at the grant type at all. Login Detail still reports the
+  reason the grant itself would have got, from the first value of each field,
+  so such a request is reported - but not as "sent twice".
 - **A strict `logger.default` silences the log lines.** With for example
   `logger: default: error`, nothing is written to the log - the events are
   still fired. To keep the log lines, add:

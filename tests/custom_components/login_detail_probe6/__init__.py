@@ -11,6 +11,10 @@ features off as the self-check would, checks the fallback, and looks for every
 token and secret it used in the history, the storage file, the events, the
 websocket and the whole log. Writes report6.json.
 
+Updated for 0.11.2: F19 covers what actually broke on 2026.11 - a changed
+signature behind core source lines that all stayed where they were. The
+source check still passes; only running the classification finds it.
+
 It needs the same `http` setup as probe D: `ip_ban_enabled: true`, a high
 `login_attempts_threshold`, `use_x_forwarded_for: true` and
 `trusted_proxies: [127.0.0.1]`.
@@ -658,6 +662,43 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
             and _anonymous(degraded_jwt)
             and all(rejection.features.values()),
             [warned, degraded_token, degraded_jwt, dict(rejection.features)],
+        )
+
+        # ---- 7b. The self-check catches a changed signature (0.11.2) ---------
+        # What 2026.11 actually did: every line the self-check reads in core's
+        # source stayed, and the signature of a function called from them
+        # changed. Reading the source passed; every rejection on /auth/token
+        # lost its details. Now the whole classification is run once at
+        # startup, so this has to come out red.
+        original_verify = rejection.indieauth.verify_client_id
+
+        def _moved(client_id: str, *, request_url: str) -> bool:
+            """A signature login_detail does not know, as 2026.11's was."""
+            return False
+
+        rejection.indieauth.verify_client_id = _moved
+        try:
+            before = len(capture.records)
+            source_ok = rejection._token_endpoint_ok(hass)
+            await integration._async_self_check(hass)
+            moved_warned = [
+                r.getMessage()
+                for r in capture.records[before:]
+                if r.levelno == logging.WARNING and "self-check" in r.getMessage()
+            ]
+            moved_off = rejection.features[rejection.FEATURE_TOKEN_ENDPOINT]
+        finally:
+            rejection.indieauth.verify_client_id = original_verify
+            await integration._async_self_check(hass)
+        report.check(
+            "F19. a changed signature behind an unchanged core source: the "
+            "source check still passes, the self-check does not, and "
+            "token_endpoint is switched off with a warning",
+            source_ok is True
+            and moved_off is False
+            and any("token_endpoint does not match" in line for line in moved_warned)
+            and rejection.features[rejection.FEATURE_TOKEN_ENDPOINT] is True,
+            [source_ok, moved_off, moved_warned],
         )
 
         # ---- 8. Acceptance 5: no secret anywhere ---------------------------------

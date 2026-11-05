@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-11-05
+
+### Fixed
+- **The `/auth/token` details are back on Home Assistant 2026.11.** 2026.11
+  gave core's `indieauth.verify_client_id` two new keyword arguments -
+  `request_scheme` and `request_netloc` - so that the origin a request was
+  made to is a valid client ID even when it is a public IP address. The old
+  call raised `TypeError`, `classify` swallowed it as it must, and every
+  rejection on `/auth/token` came out as `invalid_request_auth` with
+  `rejection: null` and no `client_id`, `grant_type`, `token_type` or user:
+  a revoked refresh token, a real one sent with the wrong client ID, an
+  invalid client ID, a missing refresh token and a made-up authorization
+  code all looked the same. The check is now called the way the installed
+  core takes it, read off its signature, so 2026.10 and 2026.11 both get the
+  full detail.
+
+### Changed
+- **The self-check runs the `/auth/token` classification, not just a read of
+  core's source.** The break above left every line the self-check looks for
+  in core's source untouched, so it reported `token_endpoint` green while no
+  rejection on `/auth/token` carried any detail. At setup the classification
+  is now run once on a handful of made-up forms that cannot belong to anyone
+  - in memory, with the same read-only lookups a rejected request makes, and
+  no token is created. If the result is not what it should be, the feature is
+  switched off with the usual WARNING instead of quietly reporting
+  `invalid_auth_request` for everything.
+
+### Testing
+- Acceptance probes A and B read the 2FA step off `MfaLoginFlow`, so they run
+  on 2026.11 as well as 2026.10. Probe A died in check 7 on
+  `LoginFlow.async_step_mfa` and never measured what it is there for - login
+  with and without 2FA, reload, removal, UI setup and the single-instance
+  guard. Probe A also checks the `async_finish` wrapper that 2026.11 needs.
+- Probe D brings its own admin-only endpoint for `not_admin`. 2026.11 turns a
+  non-admin away from the MCP server with `HTTPForbidden` (403) instead of
+  `Unauthorized` (401); 403 is an authorization failure, never reaches core's
+  `process_wrong_login`, and is therefore nothing login_detail sees. That is a
+  deliberate core change, and D14b now checks for both behaviours by what core
+  actually answered.
+- New unit tests (`tests/test_rejection.py`) cover the `/auth/token`
+  classification against core's real `indieauth`, and that the self-check goes
+  red when the call changes under it. Probe F checks the same in the
+  container (F19).
+
 ## [0.11.1] - 2026-11-05
 
 ### Fixed
@@ -427,7 +471,9 @@ unchanged.
   a failed login attempt
   ([home-assistant/core#148110](https://github.com/home-assistant/core/issues/148110)).
 
-[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.11.1...v0.11.2
+[0.11.1]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.9.0...v0.10.0
