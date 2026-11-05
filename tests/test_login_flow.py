@@ -137,6 +137,11 @@ def test_apply_and_revert(patched: _Hass) -> None:
     assert MfaLoginFlow.async_step_mfa.__module__ == "custom_components.login_detail"
     if MfaLoginFlow is not LoginFlow:
         assert MfaLoginFlow.async_finish.__module__ == "custom_components.login_detail"
+    else:
+        # 2026.10 and older: core's own async_finish has to be left alone.
+        # Wrapping it there reports as soon as the password is accepted,
+        # which is the double-report fixed in 0.3.0.
+        assert MfaLoginFlow.async_finish.__module__.startswith("homeassistant.")
 
 
 def test_revert_restores_core(patched: _Hass) -> None:

@@ -27,13 +27,21 @@ jobs:
   core:
     # The static checks cannot see a renamed core attribute - that is what
     # broke on 2026.11. This job installs core itself, so tests/test_ban.py
-    # and tests/test_login_flow.py run instead of being skipped.
+    # and tests/test_login_flow.py run instead of being skipped. It runs
+    # both ends of the supported range, because the 2FA steps sit on
+    # different classes in the two and the patch has to find them in both.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The minimum hacs.json allows, and the release that moved the 2FA
+        # steps from LoginFlow to MfaLoginFlow.
+        core-version: ["2026.10.0", "2026.11.0"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          # Home Assistant 2026.11 requires 3.14.2 or newer.
+          # Both 2026.10 and 2026.11 require 3.14.2 or newer.
           python-version: "3.14"
-      - run: pip install pytest "homeassistant==2026.11.0"
+      - run: pip install pytest "homeassistant==${{ matrix.core-version }}"
       - run: pytest -v
