@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # The workflows pin every action to a commit SHA. This keeps the pins moving,
+  # one reviewed pull request at a time.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # requirements-dev.txt. The integration itself has no runtime requirements.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      dev-tools:
+        patterns: ["*"]
