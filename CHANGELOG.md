@@ -53,9 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the states over the REST API. Probe G checks `banned` both without and
   with `sensor_details`. Probe A checks that the storage file is deleted
   with the entry, and that the history no longer survives removal.
-- Verified against Home Assistant 2026.11.0: pytest 41 passed, 1 skipped;
-  probes A 36/36, B 9/9, C 25/25, D 26/26, E 16/16, F 20/20, G 16/16. Not
-  yet run for 0.12.0: 2026.10.0 and run E'.
+- Verified against Home Assistant 2026.11.0 (pytest 41 passed, 1 skipped)
+  and 2026.10.0 (39 passed, 3 skipped); on both, probes A 36/36, B 9/9,
+  C 25/25, D 26/26, E 16/16, F 20/20, G 16/16. Run E' was not repeated for
+  0.12.0.
 
 ## [0.11.2] - 2026-11-05
 

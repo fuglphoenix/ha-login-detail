@@ -198,8 +198,11 @@ or IP address) and G10a (`banned` without `sensor_details`).
 For 0.11.2 it was A: 35/35, E: 15/15, E': 16/16, G: 15/15; D gained D14b and
 F gained F19 in 0.11.2.
 
-Measured for 0.12.0 on **2026.11.0** (all but E'). Not yet run for 0.12.0:
-2026.10.0 and E'.
+Measured for 0.12.0 on **2026.11.0** and **2026.10.0** (all but E').
+pytest: 41 passed, 1 skipped on 2026.11.0; 39 passed, 3 skipped on 2026.10.0.
+On 2026.10.0 probe D needs `mcp==1.28.1`, `aiohttp_sse==2.2.0` and
+`anyio==4.14.2` (core's `mcp_server` requirements); the unpinned `mcp` that
+`tools/probe_venv.sh` installs is too new for it, and the probe never starts.
 
 Measured for 0.11.2 on **2026.10.0** (all eight runs) and on **2026.11.0**
 (all but E'). Two checks read what core actually answered rather than a fixed
