@@ -18,7 +18,7 @@ Assistant upgrade.**
 ## Static checks
 
 ```sh
-pip install pytest ruff
+pip install -r requirements-dev.txt
 pytest
 ruff check custom_components tools tests
 ruff format --check custom_components tools tests

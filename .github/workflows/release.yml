@@ -1,0 +1,49 @@
+name: Release
+
+# Runs when a version tag is pushed. It stops if the tag and manifest.json
+# disagree, and otherwise publishes a release for the tag unless one exists.
+# A release made by hand in the GitHub UI pushes its tag too, so the check
+# runs then as well and the hand-made release is left as it is.
+
+on:
+  push:
+    tags: ["v*", "V*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      # gh release create. Nothing else in this job writes.
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Require the tag to match manifest.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="$(jq -r .version custom_components/login_detail/manifest.json)"
+          # v and V are both in use as the tag prefix, so accept either.
+          if [ "${TAG#[vV]}" != "${VERSION}" ]; then
+            echo "::error file=custom_components/login_detail/manifest.json::Tag ${TAG} does not match" \
+                 "the manifest version ${VERSION}. Delete the tag, bump the" \
+                 "manifest (or tag the right commit), and tag again."
+            exit 1
+          fi
+          echo "Tag ${TAG} matches manifest version ${VERSION}."
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists, leaving it as it is."
+          else
+            gh release create "${TAG}" --verify-tag --generate-notes --title "${TAG}"
+          fi
