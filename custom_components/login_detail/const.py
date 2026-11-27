@@ -127,6 +127,20 @@ DEFAULT_STORE_UNKNOWN_USERNAMES = False
 # a stranger cannot fill the log and the storage file.
 UNKNOWN_USERNAME_MAX_LENGTH = 64
 
+# Show usernames, IP addresses, hostnames and the users of active sessions in
+# the sensor attributes (0.12.0). Off by default: every user of Home
+# Assistant, administrator or not, can read every entity and its history. The
+# admin-only panel shows all of it either way.
+CONF_SENSOR_DETAILS = "sensor_details"
+DEFAULT_SENSOR_DETAILS = False
+
+# The IP address sensor lists at most this many addresses, those with the most
+# attempts, and each with at most this many usernames and endpoints. A brute
+# force from many addresses would otherwise push the attributes past the
+# recorder's 16 KB limit, and the recorder would drop them with a warning.
+IP_ATTRIBUTE_LIMIT = 20
+IP_ATTRIBUTE_LIST_LIMIT = 10
+
 # How often entries older than the age limit are removed, so they disappear
 # even when nothing new is recorded.
 PRUNE_INTERVAL = timedelta(hours=1)

@@ -17,13 +17,16 @@ never recorded. `user_id` is filled in whenever the user is known.
 
 With the option **Also store usernames that do not exist** (0.9.0, off by
 default), a failed attempt with a username no user has keeps the name as
-typed - cut to 64 characters, control characters replaced by `\ufffd` - and
-`login_detail_failed` gets an extra field `known_user: false` (`user_id` is
-`null`). The log line quotes such a name and ends in `known_user=False`.
-Without the option, or for a user that exists, the field is absent:
+typed - cut to 64 characters, control characters replaced by `\ufffd` - in
+the history: the storage file and the Sign-in log panel. Since 0.12.0 the
+name is not in the event or the log line, which may be sent on or kept far
+longer: `login_detail_failed` has `username: null` and an extra field
+`known_user: false` (`user_id` is `null`), and the log line has
+`username=None` and ends in `known_user=False`. Without the option, or for a
+user that exists, the field is absent:
 
 ```text
-Sign-in log: type=auth.login_failed reason=invalid_auth username='admin' user_id=None auth_provider=homeassistant client_id=None token_type=None client_name=None grant_type=None ip=203.0.113.7 endpoint=/auth/login_flow user_agent='…' flow_id=01J… ingress=direct host='ha.example.com' x_forwarded_for_untrusted=None known_user=False
+Sign-in log: type=auth.login_failed reason=invalid_auth username=None user_id=None auth_provider=homeassistant client_id=None token_type=None client_name=None grant_type=None ip=203.0.113.7 endpoint=/auth/login_flow user_agent='…' flow_id=01J… ingress=direct host='ha.example.com' x_forwarded_for_untrusted=None known_user=False
 ```
 `user_agent` is the client's `User-Agent` header, cut to 256 characters.
 

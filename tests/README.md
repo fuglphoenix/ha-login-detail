@@ -91,8 +91,8 @@ it. Real bootstrap, real config entry machinery, real entity registry, real
 | `login_detail_probe3` | The sign-in log (0.7.0) over real HTTP and websocket: `user_id`, `user_agent`, the username guard, one log line per event, the websocket command and its filters, **refusal for non-admin users**, the panel, retention and the options. |
 | `login_detail_probe4` | Rejected requests (0.7.1) on `/api/mcp` (MCP server, "require admin"), the websocket, `/auth/token`, a signed path and the probe's own admin-only view: every `rejection` type, the user and client of an expired normal and long-lived token, **forged, unsigned, unknown and revoked tokens naming nobody**, a local-only user from outside, `not_admin`, folding, the `reason` filter, **no token or part of one anywhere** (history, storage file, events, websocket, the whole log), the IP ban counter, and that a call without a token can get the IP banned. D14b checks what core answers a non-admin on the MCP server - 401 up to 2026.10, 403 from 2026.11, where it is not a failed login any more. |
 | `login_detail_probe6` | `/auth/token` details and ingress (0.10.0) over real HTTP and websocket: a revoked refresh token, a real one with the wrong client ID, a local-only user from outside, an invalid client ID, no refresh token, a made-up authorization code and an unknown grant type; an expired long-lived token on the websocket; tokens of a deleted refresh token and a deleted user; a random bearer value without an exception; Host and the raw X-Forwarded-For chain through a proxy, marked untrusted, also on a failed login; the websocket command, the log line and the panel; **the self-check, its fallback, and that it catches a changed signature behind an unchanged core source (F19)**; and **no token, refresh token, code or password anywhere**. With `LOGIN_DETAIL_PROBE_SECRETS` set it writes every secret to that file, so the log and config directory can be searched with `grep -rF -f`. |
-| `login_detail_probe7` | IP bans (0.11.0) over real HTTP, each from its own address through the trusted proxy: a rejected REST call and a wrong password below the threshold (plain, and the wrong password reported once), and at threshold - 1 (`ip_banned_now` with `attempts` and `threshold` on the event, one marked history entry, a WARNING line, 403 afterwards); `banned` per IP on the sensor; the history attribute, the websocket, the storage file and the panel; and that unloading the entry restores core's `process_wrong_login` in login_flow.py. |
-| `login_detail_probe5` | The option `store_unknown_usernames` (0.9.0) over real HTTP: **off by default, and off means an unknown name is `null` everywhere, as before**; on: the name as typed with `known_user: false` in the history, event, log line, both 24h sensors, the websocket and the storage file, a known user unchanged, a long name cut to 64 characters with its line break replaced; off again. All switching is done through **Configure** (the options flow) on a loaded entry, and must take effect by a reload of the entry, without a restart. Run on a config with an entry from before 0.9.0 (E'), it also checks that the missing key reads as off and that turning it on keeps the other options. |
+| `login_detail_probe7` | IP bans (0.11.0) over real HTTP, each from its own address through the trusted proxy: a rejected REST call and a wrong password below the threshold (plain, and the wrong password reported once), and at threshold - 1 (`ip_banned_now` with `attempts` and `threshold` on the event, one marked history entry, a WARNING line, 403 afterwards); `banned` per IP on the sensor, and only the number of banned addresses without the `sensor_details` option (0.12.0); the history attribute, the websocket, the storage file and the panel; and that unloading the entry restores core's `process_wrong_login` in login_flow.py. |
+| `login_detail_probe5` | The option `store_unknown_usernames` (0.9.0) over real HTTP: **off by default, and off means an unknown name is `null` everywhere, as before**; on: the name as typed with `known_user: false` in the history, the websocket and the storage file, and from 0.12.0 `username: null` with `known_user: false` in the event and the log line and the name in no sensor, a known user unchanged, a long name cut to 64 characters with its line break replaced; off again. All switching is done through **Configure** (the options flow) on a loaded entry, and must take effect by a reload of the entry, without a restart. Run on a config with an entry from before 0.9.0 (E'), it also checks that the missing key reads as off and that turning it on keeps the other options. E16 (0.12.0) signs in a non-admin user and reads `/api/states` over REST: no username or IP address may be in it. |
 
 The probes write their result to `report.json` / `report2.json` /
 `report3.json` / `report4.json` / `report5.json` / `report6.json` /
@@ -190,9 +190,16 @@ options with `max_entries`, `max_days` and `show_panel`, **without**
 one. Seed only that file: a copy of a whole config directory from another
 run fails, because the probe creates its test users again.
 
-Expected result for 0.11.2: **A: 35/35, B: 9/9, C: 25/25, D: 26/26,
-E: 15/15, E': 16/16, F: 20/20, G: 15/15.** D gained D14b and F gained F19 in
-0.11.2; before that D was 25 and F 19.
+Expected result for 0.12.0: **A: 36/36, B: 9/9, C: 25/25, D: 26/26,
+E: 16/16, F: 20/20, G: 16/16.** 0.12.0 added A24b (the storage file is
+deleted with the entry), turned A30 around (the history no longer survives
+removal), and added E16 (a non-admin reading `/api/states` finds no username
+or IP address) and G10a (`banned` without `sensor_details`).
+For 0.11.2 it was A: 35/35, E: 15/15, E': 16/16, G: 15/15; D gained D14b and
+F gained F19 in 0.11.2.
+
+Measured for 0.12.0 on **2026.11.0** (all but E'). Not yet run for 0.12.0:
+2026.10.0 and E'.
 
 Measured for 0.11.2 on **2026.10.0** (all eight runs) and on **2026.11.0**
 (all but E'). Two checks read what core actually answered rather than a fixed

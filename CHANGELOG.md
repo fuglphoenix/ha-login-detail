@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-27
+
+### Security
+- **The sensors no longer show who logs in to users who are not
+  administrators.** The Sign-in log panel and its websocket command are for
+  administrators only, but every user can read every entity and its history,
+  and the sensors carried usernames, IP addresses, hostnames and every user's
+  active sessions with their IP addresses and client names. By default they
+  now only count: results, endpoints, times, session types and how many
+  addresses are banned. The new option **Show usernames and IP addresses in
+  the sensors** (`sensor_details`, off by default) brings the details back,
+  with a warning that every user can read them. See
+  [Upgrading to 0.12.0](docs/upgrading.md#upgrading-to-0120) for what an
+  automation or card that reads them must change.
+- **A username no user has is kept only in the storage file and the
+  Sign-in log.** With **Also store usernames that do not exist** on, the name
+  - possibly a password typed into the wrong field - was also in the event,
+  the log line, the sensors and the recorder. The event and the log line now
+  have `username: null` with `known_user: false`, and no sensor shows the
+  name, whatever the options. Turning the option off removes the names
+  stored while it was on.
+- **`.storage/login_detail_history` is a private file**, written atomically,
+  and it is deleted when the integration is deleted. Up to 0.11.2 it was
+  readable by others on the host and stayed behind after removal. An
+  existing file gets the new permissions on the first start.
+
+### Fixed
+- **The IP address sensor's attributes are bounded.** A brute force from
+  many addresses pushed them past the recorder's 16 KB limit, so the recorder
+  dropped them and filled the log with warnings. With `sensor_details` on,
+  `addresses` lists the 20 addresses with the most attempts, with at most 10
+  usernames and endpoints each, and `addresses_not_shown` counts the rest.
+  The per-address table is computed once per update instead of four times.
+
+### Testing
+- `tests/test_privacy.py` reads all six sensors the way the state machine
+  has them and checks that no username, IP address, hostname, session user
+  or client name is in them by default; that an unknown username is in no
+  sensor, event or log line; the storage file's arguments and its removal;
+  and the bound on the IP address sensor. It runs on any core release.
+- Acceptance probe E checks the unknown name against the event, the log
+  line and the sensors with `sensor_details` on, that turning the option off
+  removes the stored names, and lets a user who is not an administrator read
+  the states over the REST API. Probe G checks `banned` both without and
+  with `sensor_details`. Probe A checks that the storage file is deleted
+  with the entry, and that the history no longer survives removal.
+- Verified against Home Assistant 2026.11.0: pytest 41 passed, 1 skipped;
+  probes A 36/36, B 9/9, C 25/25, D 26/26, E 16/16, F 20/20, G 16/16. Not
+  yet run for 0.12.0: 2026.10.0 and run E'.
+
 ## [0.11.2] - 2026-11-05
 
 ### Fixed
@@ -471,7 +521,8 @@ unchanged.
   a failed login attempt
   ([home-assistant/core#148110](https://github.com/home-assistant/core/issues/148110)).
 
-[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.11.2...v0.12.0
 [0.11.2]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/fuglphoenix/ha-login-detail/compare/v0.10.1...v0.11.0

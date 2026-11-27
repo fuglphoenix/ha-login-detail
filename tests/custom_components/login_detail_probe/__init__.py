@@ -12,6 +12,7 @@ import asyncio
 from ipaddress import ip_address
 import json
 import logging
+import os
 import traceback
 from typing import Any
 
@@ -453,6 +454,14 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
         all(hass.states.get(e) is None for e in expected),
         [e for e in expected if hass.states.get(e) is not None],
     )
+    # 0.12.0: the file holds usernames and IP addresses, and is deleted with
+    # the integration.
+    history_file = hass.config.path(".storage", "login_detail_history")
+    report.check(
+        "24b. the storage file is deleted with the entry",
+        not await hass.async_add_executor_job(os.path.exists, history_file),
+        history_file,
+    )
 
     # ---- 8. Setup from the UI --------------------------------------------
     flow_result = await hass.config_entries.flow.async_init(
@@ -498,8 +507,8 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
         capture.failed,
     )
     report.check(
-        "30. the earlier history survived",
-        len(hass.data[TARGET].history) > 1,
+        "30. the earlier history is gone, only the new attempt is there",
+        len(hass.data[TARGET].history) == 1,
         len(hass.data[TARGET].history),
     )
 

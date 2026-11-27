@@ -20,10 +20,12 @@
           "max_entries": "Maximum number of entries",
           "max_days": "Keep entries for (days)",
           "show_panel": "Show the Sign-in log panel in the sidebar (administrators only)",
-          "store_unknown_usernames": "Also store usernames that do not exist (failed logins)"
+          "store_unknown_usernames": "Also store usernames that do not exist (failed logins)",
+          "sensor_details": "Show usernames and IP addresses in the sensors (all users can read them)"
         },
         "data_description": {
-          "store_unknown_usernames": "Shows what a brute force attempt tries. WARNING: if someone types their password into the username field, it is stored in plain text in the events, the log, the sign-in log, the sensor history, the recorder database and backups. Off by default. Usernames are cut to 64 characters."
+          "store_unknown_usernames": "Shows what a brute force attempt tries. WARNING: if someone types their password into the username field, it is stored in plain text in the sign-in log file and shown in the Sign-in log panel (administrators only), and is in every backup made while it is stored. It is never put in the events, the log or the sensors. Off by default; turning it off removes the stored names. Usernames are cut to 64 characters.",
+          "sensor_details": "Off by default. Every user of Home Assistant - also users who are not administrators - can read every sensor and its history. With this on, the sensors show the usernames, IP addresses and hostnames of logins and the users, IP addresses and clients of active sessions, and the recorder keeps them. The Sign-in log panel shows all of it to administrators either way."
         }
       }
     }

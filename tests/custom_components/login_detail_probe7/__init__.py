@@ -351,6 +351,29 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
             "sensor", TARGET, "login_detail_unique_ip_24h"
         )
         state = hass.states.get(entity_id) if entity_id else None
+        attributes = dict(state.attributes) if state else {}
+        report.check(
+            "G10a. Login IP addresses 24h without sensor_details (0.12.0): "
+            "the number of banned addresses, no addresses",
+            attributes.get("banned") == 2
+            and "addresses" not in attributes
+            and not any(
+                ip in json.dumps(attributes)
+                for ip in (REST_BANNED, FLOW_BANNED, REST_PLAIN, FLOW_PLAIN)
+            ),
+            attributes,
+        )
+        options = await hass.config_entries.options.async_init(entry.entry_id)
+        user_input = {
+            key.schema: key.default() for key in options["data_schema"].schema
+        }
+        user_input["sensor_details"] = True
+        await hass.config_entries.options.async_configure(
+            options["flow_id"], user_input
+        )
+        await hass.async_block_till_done()
+        data = hass.data[TARGET]
+        state = hass.states.get(entity_id) if entity_id else None
         addresses = (state.attributes.get("addresses") or {}) if state else {}
         report.check(
             "G10. Login IP addresses 24h: banned true for the two banned "

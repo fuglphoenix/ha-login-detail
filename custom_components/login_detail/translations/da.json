@@ -20,10 +20,12 @@
           "max_entries": "Højst antal poster",
           "max_days": "Gem poster i (dage)",
           "show_panel": "Vis panelet Sign-in log i sidepanelet (kun administratorer)",
-          "store_unknown_usernames": "Gem også brugernavne, der ikke findes (fejlede logins)"
+          "store_unknown_usernames": "Gem også brugernavne, der ikke findes (fejlede logins)",
+          "sensor_details": "Vis brugernavne og IP-adresser i sensorerne (alle brugere kan læse dem)"
         },
         "data_description": {
-          "store_unknown_usernames": "Viser, hvad et brute force-forsøg prøver. ADVARSEL: hvis nogen taster sin adgangskode i brugernavnsfeltet, gemmes den i klartekst i hændelserne, loggen, login-loggen, sensorhistorikken, recorder-databasen og backups. Slået fra som standard. Brugernavne afkortes til 64 tegn."
+          "store_unknown_usernames": "Viser, hvad et brute force-forsøg prøver. ADVARSEL: hvis nogen taster sin adgangskode i brugernavnsfeltet, gemmes den i klartekst i login-loggens fil og vises i panelet Sign-in log (kun administratorer), og den er med i hver backup, der tages, mens den er gemt. Den kommer aldrig i hændelserne, loggen eller sensorerne. Slået fra som standard; slås den fra, slettes de gemte navne. Brugernavne afkortes til 64 tegn.",
+          "sensor_details": "Slået fra som standard. Alle brugere af Home Assistant - også brugere, der ikke er administratorer - kan læse alle sensorer og deres historik. Slået til viser sensorerne brugernavne, IP-adresser og værtsnavne for logins og brugere, IP-adresser og klienter for aktive sessioner, og recorderen gemmer dem. Panelet Login-log viser det hele for administratorer under alle omstændigheder."
         }
       }
     }
