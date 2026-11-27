@@ -15,6 +15,13 @@ No entity exposes passwords, tokens or keys. The sessions sensor only reads
 metadata (user, IP address, time, client name) through hass.auth - never
 .storage/auth directly.
 
+Every user of Home Assistant can read every entity, administrator or not, and
+the recorder keeps the attributes. So since 0.12.0 the sensors carry no
+usernames, IP addresses, hostnames or session users unless the owner turns on
+the `sensor_details` option; the admin-only panel shows them either way. A
+username no user has (the `store_unknown_usernames` option) is never shown in
+a sensor, not even then - it may be a password typed into the wrong field.
+
 The entity names, units and attribute keys are English. The unique IDs must
 never change: the entity registry finds an existing entity by its unique ID and
 keeps its entity ID, so installations from before 0.8.0 keep
@@ -40,6 +47,8 @@ from .ban_status import banned_addresses, is_banned
 from .const import (
     DOMAIN,
     HISTORY_ATTRIBUTE_LIMIT,
+    IP_ATTRIBUTE_LIMIT,
+    IP_ATTRIBUTE_LIST_LIMIT,
     RESULT_IP_BANNED_NOW,
     RESULT_OK,
     SIGNAL_UPDATED,
@@ -93,7 +102,7 @@ async def async_setup_entry(
             LoginCountSensor(data, ok=False),
             LoginUniqueIpSensor(data),
             LoginHistorySensor(data),
-            LoginSessionsSensor(),
+            LoginSessionsSensor(data),
         ]
     )
 
@@ -108,18 +117,24 @@ def _local(timestamp: str | None) -> str | None:
     return dt_util.as_local(parsed).replace(microsecond=0).isoformat()
 
 
-def _as_text(entry: dict[str, Any]) -> dict[str, Any]:
+def _username(entry: dict[str, Any]) -> str | None:
+    """The username a sensor may show - never one no user has."""
+    if entry.get("known_user") is False:
+        return None
+    return entry.get("username")
+
+
+def _as_text(entry: dict[str, Any], details: bool) -> dict[str, Any]:
     """History entry in the shape the attributes show it."""
-    text = {
-        "time": _local(entry.get("timestamp")),
-        "result": entry.get("result"),
-        "username": entry.get("username"),
-        "ip": entry.get("ip_address"),
-        "hostname": entry.get("hostname"),
-        "auth_provider": entry.get("auth_provider"),
-        "endpoint": entry.get("endpoint"),
-        "count": _weight(entry),
-    }
+    text: dict[str, Any] = {"time": _local(entry.get("timestamp"))}
+    text["result"] = entry.get("result")
+    if details:
+        text["username"] = _username(entry)
+        text["ip"] = entry.get("ip_address")
+        text["hostname"] = entry.get("hostname")
+    text["auth_provider"] = entry.get("auth_provider")
+    text["endpoint"] = entry.get("endpoint")
+    text["count"] = _weight(entry)
     # Only the entry that got the IP address banned has these (0.11.0); every
     # other entry is left without three nulls.
     if entry.get(RESULT_IP_BANNED_NOW):
@@ -141,7 +156,11 @@ class LoginDetailSensor(SensorEntity):
 
     def __init__(self, data: Any) -> None:
         self._data = data
+        self._details: bool = getattr(data, "sensor_details", False)
         self._last_written: tuple[Any, Any] | None = None
+
+    def _invalidate(self) -> None:
+        """Forget anything computed for the previous write."""
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
@@ -158,6 +177,7 @@ class LoginDetailSensor(SensorEntity):
         The timer ticks every 5 minutes, but logins are rare. Without this,
         every tick would add a recorder row with no new content.
         """
+        self._invalidate()
         snapshot = (self.native_value, self.extra_state_attributes)
         if snapshot == self._last_written:
             return
@@ -203,8 +223,10 @@ class LoginLatestSensor(LoginDetailSensor):
         if not self._data.history:
             return None
         entry = self._data.history[0]
+        if not self._details:
+            return f"{entry.get('result')} · {entry.get('endpoint')}"[:255]
         # A rejected request has no username; the endpoint says more.
-        who = entry.get("username") or entry.get("endpoint")
+        who = _username(entry) or entry.get("endpoint")
         value = f"{entry.get('result')} · {who} · {entry.get('ip_address')}"
         return value[:255]
 
@@ -212,7 +234,7 @@ class LoginLatestSensor(LoginDetailSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         if not self._data.history:
             return {}
-        return _as_text(self._data.history[0])
+        return _as_text(self._data.history[0], self._details)
 
 
 class LoginCountSensor(LoginDetailSensor):
@@ -247,15 +269,19 @@ class LoginCountSensor(LoginDetailSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         matching = self._matching()
-        # Rejected requests have no username; leave them out of that tally
-        # instead of counting them as "unknown".
-        with_username = [entry for entry in matching if entry.get("username")]
-        return {
-            "ip_addresses": _tally_entries(matching, "ip_address"),
-            "usernames": _tally_entries(with_username, "username"),
-            "endpoints": _tally_entries(matching, "endpoint"),
-            "latest": _local(matching[0].get("timestamp")) if matching else None,
-        }
+        attributes: dict[str, Any] = {}
+        if self._details:
+            # Rejected requests have no username; leave them out of that tally
+            # instead of counting them as "unknown". So are the names no user
+            # has.
+            with_username = [entry for entry in matching if _username(entry)]
+            attributes["ip_addresses"] = _tally_entries(matching, "ip_address")
+            attributes["usernames"] = _tally_entries(with_username, "username")
+        attributes["endpoints"] = _tally_entries(matching, "endpoint")
+        attributes["latest"] = (
+            _local(matching[0].get("timestamp")) if matching else None
+        )
+        return attributes
 
 
 class LoginUniqueIpSensor(LoginDetailSensor):
@@ -267,7 +293,24 @@ class LoginUniqueIpSensor(LoginDetailSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "addresses"
 
+    def __init__(self, data: Any) -> None:
+        super().__init__(data)
+        self._rows: dict[str, dict[str, Any]] | None = None
+
+    def _invalidate(self) -> None:
+        self._rows = None
+
     def _per_ip(self) -> dict[str, dict[str, Any]]:
+        """All addresses in the window, computed once per write.
+
+        Home Assistant reads the state and the attributes twice per write -
+        once for the change check, once to write them.
+        """
+        if self._rows is None:
+            self._rows = self._compute_per_ip()
+        return self._rows
+
+    def _compute_per_ip(self) -> dict[str, dict[str, Any]]:
         # Core's ban list, read once per update and never written to (0.11.0).
         # `banned` is the state now, not at the time of the attempts, and is
         # always false when ip_ban_enabled is off.
@@ -291,7 +334,7 @@ class LoginUniqueIpSensor(LoginDetailSensor):
                 row["ok"] += _weight(entry)
             else:
                 row["failed"] += _weight(entry)
-            username = entry.get("username")
+            username = _username(entry)
             if username and username not in row["usernames"]:
                 row["usernames"].append(username)
             endpoint = entry.get("endpoint")
@@ -305,7 +348,29 @@ class LoginUniqueIpSensor(LoginDetailSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"addresses": self._per_ip()}
+        per_ip = self._per_ip()
+        banned = sum(1 for row in per_ip.values() if row["banned"])
+        if not self._details:
+            return {"banned": banned}
+        # The addresses with the most attempts, so the attributes stay well
+        # below the recorder's limit however many addresses there are.
+        top = sorted(
+            per_ip.items(),
+            key=lambda item: item[1]["ok"] + item[1]["failed"],
+            reverse=True,
+        )[:IP_ATTRIBUTE_LIMIT]
+        return {
+            "addresses": {
+                ip_address: {
+                    **row,
+                    "usernames": row["usernames"][:IP_ATTRIBUTE_LIST_LIMIT],
+                    "endpoints": row["endpoints"][:IP_ATTRIBUTE_LIST_LIMIT],
+                }
+                for ip_address, row in top
+            },
+            "addresses_not_shown": len(per_ip) - len(top),
+            "banned": banned,
+        }
 
 
 class LoginHistorySensor(LoginDetailSensor):
@@ -324,7 +389,7 @@ class LoginHistorySensor(LoginDetailSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
             "events": [
-                _as_text(entry)
+                _as_text(entry, self._details)
                 for entry in self._data.history[:HISTORY_ATTRIBUTE_LIMIT]
             ]
         }
@@ -335,7 +400,9 @@ class LoginSessionsSensor(SensorEntity):
 
     This is where you see that someone is *still* logged in - unlike the
     history, which only shows the moment of login. System tokens (Supervisor
-    and others) are not counted; they do not belong to a person.
+    and others) are not counted; they do not belong to a person. Without the
+    `sensor_details` option a session is only its type and when it was last
+    used: no user, no IP address, no client name.
     """
 
     _attr_should_poll = False
@@ -345,7 +412,8 @@ class LoginSessionsSensor(SensorEntity):
     _attr_icon = "mdi:account-key"
     _attr_native_unit_of_measurement = "sessions"
 
-    def __init__(self) -> None:
+    def __init__(self, data: Any) -> None:
+        self._details: bool = getattr(data, "sensor_details", False)
         self._sessions: list[dict[str, Any]] = []
         self._written: list[dict[str, Any]] | None = None
 
@@ -374,21 +442,21 @@ class LoginSessionsSensor(SensorEntity):
                 for token in user.refresh_tokens.values():
                     if token.token_type == TOKEN_TYPE_SYSTEM:
                         continue
-                    sessions.append(
-                        {
-                            "user": user.name,
-                            "ip": token.last_used_ip,
-                            "last_used": (
-                                dt_util.as_local(token.last_used_at)
-                                .replace(microsecond=0)
-                                .isoformat()
-                                if token.last_used_at
-                                else None
-                            ),
-                            "type": token.token_type,
-                            "client": token.client_name or token.client_id,
-                        }
-                    )
+                    session: dict[str, Any] = {
+                        "last_used": (
+                            dt_util.as_local(token.last_used_at)
+                            .replace(microsecond=0)
+                            .isoformat()
+                            if token.last_used_at
+                            else None
+                        ),
+                        "type": token.token_type,
+                    }
+                    if self._details:
+                        session["user"] = user.name
+                        session["ip"] = token.last_used_ip
+                        session["client"] = token.client_name or token.client_id
+                    sessions.append(session)
         except Exception:  # noqa: BLE001 - a sensor must not break startup
             return
         sessions.sort(key=lambda row: row["last_used"] or "", reverse=True)
@@ -406,6 +474,8 @@ class LoginSessionsSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        if not self._details:
+            return {"sessions": self._sessions}
         return {
             "sessions": self._sessions,
             "ip_addresses": _tally(row["ip"] for row in self._sessions),

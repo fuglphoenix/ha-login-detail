@@ -95,8 +95,10 @@ With IP banning on, the attempt that got an IP address banned fires
 address sensor shows `banned: true/false` per address - see
 [IP bans](docs/events.md#ip-bans-0110).
 
-Six sensors, created automatically - no YAML, no helpers. Attributes in
-[Entities](docs/entities.md):
+Six sensors, created automatically - no YAML, no helpers. Every user of
+Home Assistant can read them, so they show no usernames, IP addresses or
+session users unless you turn on **Show usernames and IP addresses in the
+sensors** (0.12.0). Attributes in [Entities](docs/entities.md):
 
 | Entity ID (new installation) | Entity ID (installed before 0.8.0) | Shows |
 |---|---|---|
@@ -105,7 +107,7 @@ Six sensors, created automatically - no YAML, no helpers. Attributes in
 | `sensor.login_failed_24h` | `sensor.login_mislykkede_24t` | Failed logins and rejected requests, last 24 hours |
 | `sensor.login_ip_addresses_24h` | `sensor.login_ip_adresser_24t` | Unique IP addresses, last 24 hours, and whether each is banned |
 | `sensor.login_history` | `sensor.login_historik` | Stored events |
-| `sensor.login_active_sessions` | `sensor.login_aktive_sessioner` | Active refresh tokens per user |
+| `sensor.login_active_sessions` | `sensor.login_aktive_sessioner` | Active refresh tokens |
 
 ## Sign-in log
 
@@ -132,6 +134,7 @@ Non-admin users do not see the panel.
 | Keep entries for (days) | 7 | 1-365 |
 | Show the Sign-in log panel | on | |
 | Also store usernames that do not exist | off | |
+| Show usernames and IP addresses in the sensors | off | |
 
 The options can be changed at any time, also on an existing installation;
 saving reloads the integration, so a change applies without a restart. An
@@ -142,15 +145,28 @@ hourly, also when nothing new is logged.
 
 By default, the username of a failed login is only kept if a user has it.
 Turn on **Also store usernames that do not exist** to see what a brute force
-attempt tries: the name is then kept as typed (cut to 64 characters), and the
-row is marked "no such user" (`known_user: false`, no user ID).
+attempt tries: the name is then kept as typed (cut to 64 characters) in the
+Sign-in log, and the row is marked "no such user" (`known_user: false`, no
+user ID). The event and the log line say `known_user: false` without the
+name, and no sensor shows it.
 
 > [!CAUTION]
 > With this option on, **a password typed into the username field is stored
-> in plain text** - in the events, the Home Assistant log, the Sign-in log,
-> the sensor history, the recorder database and every backup that contains
-> them. Turning the option off again does not remove what was stored. Only
-> turn it on if you accept that, and tell the people who log in.
+> in plain text** in `.storage/login_detail_history`, shown in the Sign-in
+> log, and in every backup made while it is stored. Turning the option off
+> removes the stored names from the file; backups keep theirs. Only turn it
+> on if you accept that, and tell the people who log in.
+
+**Show usernames and IP addresses in the sensors** puts usernames, IP
+addresses and hostnames of logins, and the users, IP addresses and clients
+of active sessions, into the sensor attributes - as up to 0.11.2.
+
+> [!WARNING]
+> **Every user of Home Assistant can read the sensors and their history, not
+> only administrators**, and the recorder keeps them. Only turn the option on
+> if every person with a login may see who logs in, from where, and who is
+> logged in now. For automations, use the [events](docs/events.md#events)
+> instead: only administrators can subscribe to them.
 
 ## Automation example
 
@@ -184,13 +200,15 @@ alice from 203.0.113.7 (invalid_mfa_code)
 This integration stores usernames, user IDs, IP addresses, user agents, the
 names of long-lived tokens and OAuth client IDs, and - since 0.10.0 - the
 `Host` header and the raw `X-Forwarded-For` header in plain text - in the
-events, the log, `.storage/login_detail_history` and, partly, the sensor
-attributes and therefore the recorder database and backups - and looks up
-every IP address with reverse DNS. `X-Forwarded-For` is set by the client
-and cannot be trusted. With the option **Also store usernames
-that do not exist**, that includes whatever was typed into the username
-field, possibly a password. If you run Home Assistant for other
-people, tell them. Details in [Privacy](docs/privacy.md).
+events, the log, `.storage/login_detail_history` (a private file since
+0.12.0) and backups - and looks up every IP address with reverse DNS.
+`X-Forwarded-For` is set by the client and cannot be trusted. The sensors,
+which every user can read, show none of it unless you turn on **Show
+usernames and IP addresses in the sensors**. With the option **Also store
+usernames that do not exist**, the storage file also holds whatever was
+typed into the username field, possibly a password. If you run Home
+Assistant for other people, tell them. Details in
+[Privacy](docs/privacy.md).
 
 ## Removal
 
@@ -199,9 +217,9 @@ people, tell them. Details in [Privacy](docs/privacy.md).
 2. Delete `config/custom_components/login_detail/` (or uninstall it in HACS).
 3. Restart Home Assistant.
 
-The history file `.storage/login_detail_history` is kept, so a re-install
-picks up where it left off. Delete it as well if you want the stored
-usernames and IP addresses gone.
+Deleting the integration also deletes the history file
+`.storage/login_detail_history` (0.12.0; older versions kept it). What the
+recorder, the log and backups hold follows their own retention.
 
 ## Documentation
 

@@ -5,7 +5,9 @@ integration -> Login Detail. The options (the cog on the entry) set how long
 the sign-in log is kept - by number of entries and by age - whether the
 admin-only "Sign-in log" panel is shown in the sidebar, and whether the
 username of a failed login is kept when no user has it (off by default, see
-`store_unknown_usernames` in const.py). Saving the options reloads the entry.
+`store_unknown_usernames` in const.py), and whether the sensors show
+usernames and IP addresses (off by default, see `sensor_details`). Saving the
+options reloads the entry.
 
 `single_config_entry: true` in the manifest makes core reject attempts to
 create a second entry. The check in `async_step_user` is belt and braces - it
@@ -32,10 +34,12 @@ import probatio
 from .const import (
     CONF_MAX_DAYS,
     CONF_MAX_ENTRIES,
+    CONF_SENSOR_DETAILS,
     CONF_SHOW_PANEL,
     CONF_STORE_UNKNOWN_USERNAMES,
     DEFAULT_MAX_DAYS,
     DEFAULT_MAX_ENTRIES,
+    DEFAULT_SENSOR_DETAILS,
     DEFAULT_SHOW_PANEL,
     DEFAULT_STORE_UNKNOWN_USERNAMES,
     DOMAIN,
@@ -111,6 +115,10 @@ class LoginDetailOptionsFlow(OptionsFlowWithReload):
                     default=options.get(
                         CONF_STORE_UNKNOWN_USERNAMES, DEFAULT_STORE_UNKNOWN_USERNAMES
                     ),
+                ): bool,
+                probatio.Required(
+                    CONF_SENSOR_DETAILS,
+                    default=options.get(CONF_SENSOR_DETAILS, DEFAULT_SENSOR_DETAILS),
                 ): bool,
             }
         )

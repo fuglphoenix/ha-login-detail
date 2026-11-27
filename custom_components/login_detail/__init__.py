@@ -61,7 +61,14 @@ The option `store_unknown_usernames` (0.9.0, off by default) lifts that for
 the owner who wants to see what a brute force attempt tries: the username is
 then kept as typed - cut to 64 characters, control characters replaced - and
 the event and the entry carry `known_user: false`. With the option off,
-nothing changes.
+nothing changes. Since 0.12.0 such a name is kept only in the storage file and
+shown only in the admin-only panel: the event and the log line say
+`known_user: false` with `username: null`, and no sensor shows it. Turning the
+option off removes the names already stored.
+
+The storage file is written with `private=True` (0.12.0), so only the user
+Home Assistant runs as can read it, and it is deleted when the integration is
+deleted.
 
 Sign-in log (0.7.0)
 -------------------
@@ -177,10 +184,12 @@ from .ban_status import BanState, ban_state
 from .const import (
     CONF_MAX_DAYS,
     CONF_MAX_ENTRIES,
+    CONF_SENSOR_DETAILS,
     CONF_SHOW_PANEL,
     CONF_STORE_UNKNOWN_USERNAMES,
     DEFAULT_MAX_DAYS,
     DEFAULT_MAX_ENTRIES,
+    DEFAULT_SENSOR_DETAILS,
     DEFAULT_SHOW_PANEL,
     DEFAULT_STORE_UNKNOWN_USERNAMES,
     DOMAIN,
@@ -256,14 +265,16 @@ class LoginDetailData:
         max_entries: int = DEFAULT_MAX_ENTRIES,
         max_days: int = DEFAULT_MAX_DAYS,
         store_unknown_usernames: bool = DEFAULT_STORE_UNKNOWN_USERNAMES,
+        sensor_details: bool = DEFAULT_SENSOR_DETAILS,
     ) -> None:
         self.hass = hass
-        self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self._store = _history_store(hass)
         self.history: list[dict[str, Any]] = []
         self._host_cache: dict[str, str | None] = {}
         self.max_entries = max_entries
         self.max_days = max_days
         self.store_unknown_usernames = store_unknown_usernames
+        self.sensor_details = sensor_details
 
     async def async_load(self) -> None:
         """Read the history from disk. An unreadable file must not break startup."""
@@ -276,8 +287,28 @@ class LoginDetailData:
             stored = None
         if isinstance(stored, dict) and isinstance(stored.get("history"), list):
             self.history = stored["history"][: self.max_entries]
-        if self._prune():
+        pruned = self._prune()
+        scrubbed = self._scrub_unknown_usernames()
+        # A file written before 0.12.0 is readable by others; writing it once
+        # gives it the permissions of a private file.
+        if pruned or scrubbed or stored is not None:
             self._async_save()
+
+    def _scrub_unknown_usernames(self) -> bool:
+        """With the option off, forget the unknown names stored while it was on.
+
+        The entry is left as the option off would have written it: no
+        username, no `known_user`. True if any entry changed.
+        """
+        if self.store_unknown_usernames:
+            return False
+        changed = False
+        for entry in self.history:
+            if entry.get("known_user") is False:
+                entry["username"] = None
+                del entry["known_user"]
+                changed = True
+        return changed
 
     def _prune(self) -> bool:
         """Drop entries beyond the retention limits. True if any were dropped.
@@ -452,6 +483,11 @@ class LoginDetailData:
         return hostname
 
 
+def _history_store(hass: HomeAssistant) -> Store[dict[str, Any]]:
+    """The storage file. It holds personal data, so others may not read it."""
+    return Store(hass, STORAGE_VERSION, STORAGE_KEY, private=True, atomic_writes=True)
+
+
 # What must match for a rejected request to be folded into an earlier one.
 _FOLD_KEYS = ("ip_address", "endpoint", "reason", "user_id", "client_id")
 
@@ -474,11 +510,13 @@ def _report(
 
     `known_user=False` marks a username no user has, stored only because the
     `store_unknown_usernames` option is on. Only then is the key added, so
-    with the option off every event and entry looks exactly as before.
+    with the option off every event and entry looks exactly as before. The
+    name itself goes only into the history: the event is in the recorder and
+    in every notification an automation sends, and the log line in the log.
     """
     request = current_request.get()
     data = {
-        "username": username,
+        "username": username if known_user else None,
         "user_id": user_id,
         "ip_address": str(ip_address) if ip_address is not None else None,
         "reason": result,
@@ -506,7 +544,7 @@ def _report(
     entry = {
         "timestamp": dt_util.utcnow().isoformat(),
         "result": result,
-        "username": data["username"],
+        "username": username,
         "user_id": data["user_id"],
         "ip_address": data["ip_address"],
         "auth_provider": data["auth_provider"],
@@ -528,8 +566,8 @@ def _log_line(result: str, data: dict[str, Any]) -> None:
     WARNING with the full URL) - is INFO. The client fields are only set for
     a rejected request whose token has been proven to be the client's.
 
-    A username no user has is free text, so it is quoted with %r and followed
-    by `known_user=False`; a line without the flag is unchanged.
+    A username no user has is never written to the log (0.12.0): the line
+    has `username=None` and ends in `known_user=False`.
 
     The request that got the IP address banned (`reason` ip_banned_now) is a
     WARNING, and the line ends with `ip_banned_now=True attempts=N
@@ -554,7 +592,7 @@ def _log_line(result: str, data: dict[str, Any]) -> None:
         "x_forwarded_for_untrusted=%r" + suffix,
         log_type_of(result),
         None if result == RESULT_OK else data.get("rejection") or result,
-        repr(data.get("username")) if unknown else data.get("username"),
+        data.get("username"),
         data.get("user_id"),
         data.get("auth_provider"),
         data.get("client_id"),
@@ -1223,6 +1261,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         store_unknown_usernames=entry.options.get(
             CONF_STORE_UNKNOWN_USERNAMES, DEFAULT_STORE_UNKNOWN_USERNAMES
         ),
+        sensor_details=entry.options.get(CONF_SENSOR_DETAILS, DEFAULT_SENSOR_DETAILS),
     )
     await data.async_load()
     hass.data[DOMAIN] = data
@@ -1311,3 +1350,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if isinstance(data, LoginDetailData):
             await data.async_flush()
     return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Delete the storage file when the integration is deleted.
+
+    The file holds usernames and IP addresses. Up to 0.11 it was kept for a
+    re-install; whoever deletes the integration expects them gone.
+    """
+    await _history_store(hass).async_remove()

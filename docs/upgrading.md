@@ -1,5 +1,37 @@
 # Upgrading
 
+## Upgrading to 0.12.0
+
+**The sensors no longer show usernames, IP addresses, hostnames or session
+users** - every user of Home Assistant, administrator or not, can read them
+and their history. What is gone by default, and how to get it back, is in
+[Entities](entities.md). Check the following after the upgrade:
+
+- **An automation, template or card that reads `username`, `ip`,
+  `hostname`, `usernames`, `ip_addresses`, `addresses`, or `user`, `ip` or
+  `client` of a session** gets nothing. Trigger on the
+  [events](events.md#events) instead - they carry all of it, and only
+  administrators can subscribe to them - or turn on **Show usernames and IP
+  addresses in the sensors** if every user of the instance may see them.
+- **The state of `sensor.login_latest_event`** is `result · endpoint`
+  instead of `result · username · ip`.
+- **The IP address sensor** has `banned` as a number. With the option on,
+  `addresses` lists the 20 addresses with the most attempts, and
+  `addresses_not_shown` says how many were left out.
+- **With "Also store usernames that do not exist" on**, an unknown name is
+  no longer in the event or the log line: both have `username: null` and
+  `known_user: false`. The name is kept only in the storage file and shown in
+  the Sign-in log panel. Turning the option off now removes the names stored
+  while it was on.
+- **`.storage/login_detail_history` is a private file** (mode 600), and it
+  is **deleted when you delete the integration** - up to 0.11.2 it was kept
+  for a re-install. An existing file gets the new permissions on the first
+  start of 0.12.0.
+
+What the recorder already holds from before the upgrade stays until it
+expires (10 days by default). To remove it now, call
+`recorder.purge_entities` for the six sensors.
+
 ## Upgrading to 0.11.2
 
 Nothing to do, and nothing changes in the events, entity IDs, unique IDs or

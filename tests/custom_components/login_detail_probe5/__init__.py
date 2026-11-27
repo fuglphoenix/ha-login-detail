@@ -5,6 +5,13 @@ on a real instance. It sets the integration up from the UI and logs in over
 real HTTP with a username no user has - first with the option off (the
 default), then on, then off again - and writes report5.json.
 
+Since 0.12.0 the name is kept only in the storage file and the admin-only
+sign-in log - never in the event, the log line or a sensor, not even with
+`sensor_details` on, which the probe turns on together with the option - and
+turning the option off removes the names stored. Last, a user who is not an
+administrator reads the states over the REST API and must find no username or
+IP address in Login Detail's sensors.
+
 If the throwaway config already has a login_detail entry (a seeded
 .storage/core.config_entries from before 0.9.0, whose options lack the key),
 the probe uses that entry instead of adding one, and also checks that the
@@ -142,10 +149,15 @@ async def _ws_list(session: aiohttp.ClientSession, token: str) -> dict[str, Any]
 
 
 async def _set_option(hass: HomeAssistant, entry_id: str, on: bool) -> Any:
-    """Like Configure in the UI: keep what the form shows, flip the one box."""
+    """Like Configure in the UI: keep what the form shows, flip the boxes.
+
+    `sensor_details` follows the option, so with it on the probe sees what
+    the sensors would show at most.
+    """
     flow = await hass.config_entries.options.async_init(entry_id)
     user_input = {key.schema: key.default() for key in flow["data_schema"].schema}
     user_input["store_unknown_usernames"] = on
+    user_input["sensor_details"] = on
     result = await hass.config_entries.options.async_configure(
         flow["flow_id"], user_input
     )
@@ -241,7 +253,11 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
             and data is not old_data
             and data.store_unknown_usernames is True
             and entry.options["store_unknown_usernames"] is True
-            and all(entry.options.get(k) == v for k, v in options_before.items())
+            and all(
+                entry.options.get(k) == v
+                for k, v in options_before.items()
+                if k != "sensor_details"
+            )
             and entry.state is ConfigEntryState.LOADED,
             [result.get("type"), dict(entry.options), options_before],
         )
@@ -275,35 +291,43 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
             long_entry,
         )
         report.check(
-            "E9. on: the event carries the name and known_user false",
+            "E9. on: the event has known_user false, but not the name (0.12.0)",
             [(e["username"], e.get("known_user")) for e in events]
-            == [(UNKNOWN, False), ("probe-member", None), (LONG_STORED, False)],
+            == [(None, False), ("probe-member", None), (None, False)],
             events,
         )
         lines = [(lvl, line) for lvl, line in capture.lines if "Sign-in log:" in line]
         report.check(
-            "E10. on: one WARNING line each; the unknown name quoted and flagged",
+            "E10. on: one WARNING line each; the unknown name flagged, not written",
             len(lines) == 3
             and all(lvl == logging.WARNING for lvl, _ in lines)
-            and f"username='{UNKNOWN}'" in lines[0][1]
+            and "username=None" in lines[0][1]
             and lines[0][1].endswith("known_user=False")
             and "known_user" not in lines[1][1]
             and "\n" not in lines[2][1]
-            and lines[2][1].endswith("known_user=False"),
+            and lines[2][1].endswith("known_user=False")
+            and UNKNOWN not in json.dumps(capture.lines)
+            and "INJECTED" not in json.dumps(capture.lines),
             lines,
         )
         failed_state = hass.states.get(failed_id) if failed_id else None
         ip_state = hass.states.get(ip_id) if ip_id else None
         report.check(
-            "E11. on: the failed-24h sensor tallies the unknown name",
+            "E11. on, with sensor_details: the failed-24h sensor tallies the"
+            " known user, never the unknown names",
             failed_state is not None
-            and UNKNOWN in json.dumps(failed_state.attributes.get("usernames")),
+            and "probe-member" in json.dumps(failed_state.attributes.get("usernames"))
+            and UNKNOWN not in json.dumps(failed_state.attributes)
+            and "INJECTED" not in json.dumps(failed_state.attributes),
             None if failed_state is None else failed_state.attributes,
         )
         report.check(
-            "E12. on: the IP address sensor lists the unknown name",
+            "E12. on, with sensor_details: the IP address sensor never lists the"
+            " unknown names",
             ip_state is not None
-            and UNKNOWN in json.dumps(ip_state.attributes.get("addresses")),
+            and "probe-member" in json.dumps(ip_state.attributes.get("addresses"))
+            and UNKNOWN not in json.dumps(ip_state.attributes)
+            and "INJECTED" not in json.dumps(ip_state.attributes),
             None if ip_state is None else ip_state.attributes,
         )
         listed = await _ws_list(session, admin_token)
@@ -326,20 +350,63 @@ async def _checks(hass: HomeAssistant, report: Report) -> None:
             None,
         )
 
-        # ---- 4. Option off again: back to null --------------------------------
+        # ---- 4. Option off again: back to null, the stored names gone --------
         await _set_option(hass, entry.entry_id, False)
         data = hass.data[TARGET]
         events.clear()
         await _http_login(session, "another-guess", "guess-4")
         await hass.async_block_till_done()
         again = data.history[0]
+        await data.async_flush()
+        stored = await hass.async_add_executor_job(
+            Path(hass.config.path(".storage", "login_detail_history")).read_text,
+            "utf-8",
+        )
         report.check(
-            "E15. off again: a new unknown name is null; older entries are kept",
+            "E15. off again: a new unknown name is null; the names stored while"
+            " it was on are removed (0.12.0), the entries kept",
             again["username"] is None
             and "known_user" not in again
             and events[0]["username"] is None
-            and any(h.get("username") == UNKNOWN for h in data.history),
+            and len(data.history) == 5
+            and not any(h.get("username") == UNKNOWN for h in data.history)
+            and not any("known_user" in h for h in data.history)
+            and UNKNOWN not in stored
+            and "known_user" not in stored,
             again,
+        )
+
+        # ---- 5. What a user who is not an administrator sees (0.12.0) --------
+        member_token = await _token(hass, member)
+        async with session.get(
+            f"{BASE}/api/states",
+            headers={"Authorization": f"Bearer {member_token}"},
+        ) as resp:
+            status = resp.status
+            states = await resp.json() if status == 200 else []
+        ours = {
+            unique_id: _entity_id(hass, unique_id)
+            for unique_id in (
+                "login_detail_latest",
+                "login_detail_ok_24h",
+                "login_detail_failed_24h",
+                "login_detail_unique_ip_24h",
+                "login_detail_history",
+                "login_detail_sessions",
+            )
+        }
+        shown = [s for s in states if s.get("entity_id") in ours.values()]
+        text = json.dumps(shown)
+        report.check(
+            "E16. a user who is not an administrator reads all six sensors, with"
+            " no username, IP address or session user in them",
+            status == 200
+            and len(shown) == 6
+            and not any(
+                value in text
+                for value in ("probe-member", "probe-admin", "127.0.0.1", UNKNOWN)
+            ),
+            [status, shown],
         )
     finally:
         await session.close()
