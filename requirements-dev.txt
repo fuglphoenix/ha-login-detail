@@ -1,0 +1,4 @@
+# Pinned, so CI gives the same answer until someone bumps these on purpose.
+# Dependabot proposes the bumps (.github/dependabot.yml).
+pytest==9.2.0
+ruff==0.17.6
